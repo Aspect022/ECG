@@ -1,0 +1,55 @@
+
+# Base Configuration for Journal-Grade ECG Research
+# Optimized for NVIDIA B100
+
+experiment:
+  seed: 42
+  device: "cuda"
+  output_dir: "experiments"
+  save_every: 5
+  log_every: 10
+  debug: false
+  num_workers: 4  # Balanced for consumer CPU
+  pin_memory: true
+  use_amp: true    # Automatic Mixed Precision (Float16/BFloat16)
+  compile: true    # torch.compile
+
+data:
+  dataset: "ptbxl"
+  data_path: "d:/Projects/ECG/data/ptbxl" # Update if needed
+  sampling_rate: 100
+  input_length: 1000 # 10 seconds @ 100Hz
+  batch_size: 128 # Adjusted for RTX 5050 (8GB VRAM)
+  test_batch_size: 256
+  task: "superclass" # Options: all, superclass, subclass, rhythm, form
+  augment: true
+
+model:
+  name: "resnet1d" # Default baseline
+  num_classes: 5   # For PTB-XL superclass
+  in_channels: 12
+  dropout: 0.1
+
+  # SNN Specific Settings (activate by setting name: "snn")
+  # channels: [32, 64, 128, 256]
+  # timesteps: 4
+  # neuron_type: "lif" # or "plif"
+
+optimizer:
+  name: "adamw"
+  lr: 1.0e-3
+  weight_decay: 1.0e-2
+  beta1: 0.9
+  beta2: 0.999
+
+scheduler:
+  name: "cosine"
+  warmup_epochs: 5
+  min_lr: 1.0e-6
+
+training:
+  epochs: 100
+  max_grad_norm: 1.0
+  patience: 15
+  criterion: "bce_with_logits" # Multi-label classification standard
+  label_smoothing: 0.05

@@ -1,0 +1,128 @@
+# ECG Classification Configuration
+# CPU-Optimized for AMD Ryzen 5000 Series
+
+# ============== Hardware Settings ==============
+hardware:
+  device: "cpu"
+  num_threads: 6  # Adjust to your Ryzen 5000 physical cores
+  use_mkldnn: true
+  quantized_backend: "fbgemm"
+
+# ============== Data Settings ==============
+data:
+  dataset: "ecg_images"  # ecg_images, ptbxl, mitbih
+  data_root: "data"
+  img_size: [64, 64]
+  in_channels: 1
+  num_classes: 4
+  train_split: 0.8
+  val_split: 0.1
+  test_split: 0.1
+
+# ============== Data Augmentation ==============
+augmentation:
+  enabled: true
+  rotation: 10
+  translate: [0.05, 0.05]
+  scale: [0.95, 1.05]
+  normalize_mean: [0.5]
+  normalize_std: [0.5]
+
+# ============== Model Settings ==============
+model:
+  architecture: "cnn_snn_transformer"
+  
+  # CNN Backbone
+  cnn:
+    type: "resnet"  # resnet, inception
+    channels: [32, 64, 128]
+    use_bn: true
+    
+  # SNN Settings
+  snn:
+    enabled: true
+    neuron_type: "lif"  # lif, plif
+    threshold: 1.0
+    decay: 0.9
+    timesteps: 4
+    surrogate: "fast_sigmoid"
+    surrogate_beta: 10.0
+    
+  # Transformer Settings
+  transformer:
+    enabled: true
+    dim: 128
+    heads: 4
+    layers: 2
+    mlp_dim: 256
+    dropout: 0.1
+    
+  # Attention Type
+  attention:
+    type: "standard"  # standard, qk, spiking, channel_spatial
+    
+  # Classification Head
+  head:
+    hidden_dim: 256
+    dropout: 0.4
+
+# ============== Training Settings ==============
+training:
+  epochs: 40
+  batch_size: 16
+  
+  # Optimizer
+  optimizer:
+    type: "adamw"
+    lr: 1.0e-3
+    weight_decay: 1.0e-4
+    
+  # Scheduler
+  scheduler:
+    type: "cosine"  # cosine, step, plateau
+    warmup_epochs: 5
+    min_lr: 1.0e-6
+    
+  # Regularization
+  gradient_clip: 5.0
+  label_smoothing: 0.1
+  
+  # Early Stopping
+  early_stopping:
+    enabled: true
+    patience: 15
+    min_delta: 0.001
+
+# ============== Quantization Settings ==============
+quantization:
+  enabled: false
+  method: "qat"  # qat, ptq, snn_quant
+  bits: 8
+  qat_epochs: 10
+  calibration_batches: 100
+  exclude_layers: ["lif", "spike", "layernorm"]
+
+# ============== PennyLane Quantum Settings ==============
+quantum:
+  enabled: false
+  n_qubits: 4
+  n_layers: 3
+  device: "default.qubit"
+
+# ============== Logging Settings ==============
+logging:
+  log_dir: "results/logs"
+  tensorboard: true
+  save_every: 10
+  log_interval: 50
+
+# ============== Checkpoint Settings ==============
+checkpoint:
+  save_dir: "results/checkpoints"
+  save_best: true
+  save_last: true
+  save_every: 10
+
+# ============== Reproducibility ==============
+seed: 42
+deterministic: true

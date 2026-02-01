@@ -1,0 +1,91 @@
+# Hybrid Quantum-Classical ECG Classifier V2.0 Configuration
+# Optimized for RTX 5050 (8GB VRAM)
+
+experiment:
+  name: "hybrid_v2"
+  seed: 42
+  device: "cuda"
+  output_dir: "experiments/hybrid_v2"
+  save_every: 5
+  log_every: 10
+  debug: false
+  num_workers: 4
+  pin_memory: true
+  use_amp: true # Mixed precision (FP16)
+  compile: false # Disable for quantum ops compatibility
+
+data:
+  dataset: "ptbxl"
+  data_path: "d:/Projects/ECG/data/ptbxl"
+  sampling_rate: 500 # High-res for V2
+  input_length: 5000 # 10 seconds @ 500Hz
+  batch_size: 64 # Conservative for RTX 5050
+  accumulation_steps: 4 # Effective batch = 256
+  test_batch_size: 128
+  task: "superclass"
+  num_classes: 5
+  augment: true
+
+model:
+  name: "hybrid_quantum_classical"
+  in_channels: 12
+
+  # Classical Path (Hierarchical Temporal Pyramid)
+  classical:
+    stage1_channels: 256
+    stage2_channels: 128
+    stage3_channels: 64
+    fusion_dim: 128
+    weight_bits: 1 # Binary quantization
+    activation_bits: 8
+
+  # Quantum Path
+  quantum:
+    n_qubits: 8
+    n_layers: 3
+    feature_dim: 64
+    entanglement: "learned" # attention-based
+
+  # Fusion
+  fusion:
+    type: "gated"
+    gate_hidden: 64
+
+  # SNN Parameters
+  snn:
+    timesteps: 4
+    threshold: 1.0
+    tau: 2.0
+    potential_bits: 8
+    spike_regularization: 0.01
+
+  # Classifier
+  classifier:
+    hidden_dim: 64
+    dropout: 0.3
+
+optimizer:
+  name: "adamw"
+  lr: 1.0e-3
+  weight_decay: 1.0e-4
+  beta1: 0.9
+  beta2: 0.999
+
+scheduler:
+  name: "cosine_warm_restarts"
+  T_0: 10
+  T_mult: 2
+  eta_min: 1.0e-6
+  warmup_epochs: 5
+
+training:
+  epochs: 100
+  max_grad_norm: 1.0
+  patience: 15
+  criterion: "cross_entropy"
+  label_smoothing: 0.1
+
+logging:
+  tensorboard: true
+  log_dir: "runs/hybrid_v2"
+  log_gate_values: true # Track quantum contribution

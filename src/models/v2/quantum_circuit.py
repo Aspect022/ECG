@@ -92,10 +92,6 @@ class VectorizedQuantumCircuit(nn.Module):
         self.theta = nn.Parameter(torch.randn(n_layers, n_qubits) * 0.1)
         self.omega = nn.Parameter(torch.randn(n_layers, n_qubits) * 0.1)
         
-        # Learned entanglement pattern (attention-based)
-        self.entangle_attn = nn.Linear(n_qubits, n_qubits, bias=False)
-        nn.init.orthogonal_(self.entangle_attn.weight)
-        
         # Precompute helper tensors
         self._init_helpers()
     
@@ -254,13 +250,11 @@ class VectorizedQuantumCircuit(nn.Module):
                 gate = QuantumGates.ry_matrix(angle).to(device).to(torch.complex64)
                 state = self._apply_single_qubit_gate(state, i, gate)
             
-            # Learned entanglement (attention-based CNOT pattern)
-            entangle_weights = F.softmax(self.entangle_attn.weight, dim=1)
+            # Circular Entanglement: CNOT(i, (i+1) % n_qubits)
+            # This is a standard, robust topology used in VQCs.
             for i in range(self.n_qubits):
-                # Find strongest connection for qubit i
-                target = torch.argmax(entangle_weights[i]).item()
-                if target != i:
-                    state = self._apply_cnot(state, control=i, target=target)
+                target = (i + 1) % self.n_qubits
+                state = self._apply_cnot(state, control=i, target=target)
             
             # RZ rotations (trainable)
             for i in range(self.n_qubits):

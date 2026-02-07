@@ -64,15 +64,24 @@ def load_config(config_path: str) -> dict:
         return yaml.safe_load(f)
 
 
-def create_dataloaders(config: dict) -> tuple:
-    """Create train, val, test dataloaders."""
+def create_fold_dataloaders(config: dict, train_folds: list, val_folds: list) -> tuple:
+    """Create train and val dataloaders for a specific fold split.
+    
+    Args:
+        config: Configuration dictionary.
+        train_folds: List of strat_fold values for training (e.g., [1, 2, 3, 4]).
+        val_folds: List of strat_fold values for validation (e.g., [5]).
+    
+    Returns:
+        Tuple of (train_loader, val_loader)
+    """
     data_cfg = config['data']
     
     train_dataset = PTBXLDataset(
         data_path=data_cfg['data_path'],
         sampling_rate=data_cfg['sampling_rate'],
         task=data_cfg['task'],
-        mode='train',
+        folds=train_folds,
         input_length=data_cfg['input_length'],
         augment=data_cfg.get('augment', True)
     )
@@ -81,16 +90,7 @@ def create_dataloaders(config: dict) -> tuple:
         data_path=data_cfg['data_path'],
         sampling_rate=data_cfg['sampling_rate'],
         task=data_cfg['task'],
-        mode='val',
-        input_length=data_cfg['input_length'],
-        augment=False
-    )
-    
-    test_dataset = PTBXLDataset(
-        data_path=data_cfg['data_path'],
-        sampling_rate=data_cfg['sampling_rate'],
-        task=data_cfg['task'],
-        mode='test',
+        folds=val_folds,
         input_length=data_cfg['input_length'],
         augment=False
     )
@@ -114,6 +114,23 @@ def create_dataloaders(config: dict) -> tuple:
         pin_memory=exp_cfg['pin_memory']
     )
     
+    return train_loader, val_loader
+
+
+def create_test_dataloader(config: dict) -> DataLoader:
+    """Create test dataloader (fold 10, held out for all K-fold runs)."""
+    data_cfg = config['data']
+    exp_cfg = config['experiment']
+    
+    test_dataset = PTBXLDataset(
+        data_path=data_cfg['data_path'],
+        sampling_rate=data_cfg['sampling_rate'],
+        task=data_cfg['task'],
+        folds=[10],  # Always fold 10 for test
+        input_length=data_cfg['input_length'],
+        augment=False
+    )
+    
     test_loader = DataLoader(
         test_dataset,
         batch_size=data_cfg.get('test_batch_size', data_cfg['batch_size']),
@@ -122,7 +139,7 @@ def create_dataloaders(config: dict) -> tuple:
         pin_memory=exp_cfg['pin_memory']
     )
     
-    return train_loader, val_loader, test_loader
+    return test_loader
 
 
 def create_model(config: dict) -> HybridQuantumClassicalECG:
@@ -390,8 +407,12 @@ def validate(
     }
 
 
-def train(config_path: str, debug: bool = False):
-    """Main training function."""
+def train(config_path: str, debug: bool = False, k_folds: int = 5):
+    """Main training function with K-Fold Cross-Validation.
+    
+    Trains `k_folds` models, each on a different train/val split.
+    Aggregates metrics across all folds for robust evaluation.
+    """
     # Load config
     config = load_config(config_path)
     
@@ -399,6 +420,7 @@ def train(config_path: str, debug: bool = False):
         config['training']['epochs'] = 2
         config['data']['batch_size'] = 4
         config['experiment']['num_workers'] = 0
+        k_folds = 2  # Faster debugging
     
     # Setup
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -417,122 +439,159 @@ def train(config_path: str, debug: bool = False):
     log_dir = Path(config['logging']['log_dir']) / timestamp
     writer = SummaryWriter(log_dir)
     
-    # Data
-    print("Creating dataloaders...")
-    train_loader, val_loader, test_loader = create_dataloaders(config)
-    print(f"Train: {len(train_loader)} batches, Val: {len(val_loader)} batches")
-    
-    # Model
-    print("Creating model...")
-    model = create_model(config)
-    model = model.to(device)
-    print(f"Model parameters: {model.num_parameters:,}")
-    
-    # Optimizer
-    opt_cfg = config['optimizer']
-    optimizer = AdamW(
-        model.parameters(),
-        lr=opt_cfg['lr'],
-        weight_decay=opt_cfg['weight_decay'],
-        betas=(opt_cfg.get('beta1', 0.9), opt_cfg.get('beta2', 0.999))
-    )
-    
-    # Scheduler
-    sched_cfg = config['scheduler']
-    scheduler = CosineAnnealingWarmRestarts(
-        optimizer,
-        T_0=sched_cfg.get('T_0', 10),
-        T_mult=sched_cfg.get('T_mult', 2),
-        eta_min=sched_cfg.get('eta_min', 1e-6)
-    )
-    
-    # Mixed precision
-    scaler = GradScaler(enabled=config['experiment'].get('use_amp', True))
-    
     # Power Meter
     power_meter = PowerMeter(device_idx=0 if device.type == 'cuda' else -1)
     
-    # Early stopping
-    early_stopping = EarlyStopping(
-        patience=config['training'].get('patience', 15)
-    )
+    # K-Fold Setup: Use folds 1-9 for CV, fold 10 is always test
+    available_folds = list(range(1, 10))  # Folds 1-9
+    fold_size = len(available_folds) // k_folds
     
-    # Training loop
-    best_val_acc = 0.0
-    train_cfg = config['training']
+    fold_results = []
     
-    print(f"\nStarting training for {train_cfg['epochs']} epochs...")
-    print("=" * 80)
+    print(f"\n{'=' * 80}")
+    print(f"Starting {k_folds}-Fold Cross-Validation")
+    print(f"{'=' * 80}\n")
     
-    for epoch in range(1, train_cfg['epochs'] + 1):
-        # Train
-        train_metrics = train_epoch(
-            model, train_loader, optimizer, scaler,
-            config, device, epoch, writer
+    for fold_idx in range(k_folds):
+        print(f"\n{'=' * 40}")
+        print(f"FOLD {fold_idx + 1}/{k_folds}")
+        print(f"{'=' * 40}")
+        
+        # Determine train/val folds for this iteration
+        # Val fold: rotate through available folds
+        val_start = fold_idx * fold_size
+        val_end = val_start + fold_size
+        val_folds = available_folds[val_start:val_end]
+        train_folds = [f for f in available_folds if f not in val_folds]
+        
+        print(f"Train folds: {train_folds}, Val fold(s): {val_folds}")
+        
+        # Create dataloaders for this fold
+        train_loader, val_loader = create_fold_dataloaders(config, train_folds, val_folds)
+        print(f"Train: {len(train_loader)} batches, Val: {len(val_loader)} batches")
+        
+        # Create FRESH model for each fold
+        model = create_model(config)
+        model = model.to(device)
+        print(f"Model parameters: {model.num_parameters:,}")
+        
+        # Optimizer
+        opt_cfg = config['optimizer']
+        optimizer = AdamW(
+            model.parameters(),
+            lr=opt_cfg['lr'],
+            weight_decay=opt_cfg['weight_decay'],
+            betas=(opt_cfg.get('beta1', 0.9), opt_cfg.get('beta2', 0.999))
         )
         
-        # Validate
-        val_metrics = validate(
-            model, val_loader, config, device, epoch, writer, power_meter
+        # Scheduler
+        sched_cfg = config['scheduler']
+        scheduler = CosineAnnealingWarmRestarts(
+            optimizer,
+            T_0=sched_cfg.get('T_0', 10),
+            T_mult=sched_cfg.get('T_mult', 2),
+            eta_min=sched_cfg.get('eta_min', 1e-6)
         )
         
-        # Scheduler step
-        scheduler.step()
-        writer.add_scalar('LR', scheduler.get_last_lr()[0], epoch)
+        # Mixed precision
+        scaler = GradScaler(enabled=config['experiment'].get('use_amp', True))
         
-        # Print epoch summary
-        print(f"Epoch {epoch:03d} | "
-              f"Train/Val Acc: {train_metrics['accuracy']:.4f}/{val_metrics['accuracy']:.4f} | "
-              f"Loss: {train_metrics['loss']:.4f}/{val_metrics['loss']:.4f} | "
-              f"Gate: {train_metrics['gate_mean']:.3f} | "
-              f"Lat: {val_metrics['latency_ms']:.2f}ms | "
-              f"E: {val_metrics['energy_mj']:.2f}mJ")
+        # Early stopping (reset per fold)
+        early_stopping = EarlyStopping(
+            patience=config['training'].get('patience', 15)
+        )
         
-        # Save best model
-        if val_metrics['accuracy'] > best_val_acc:
-            best_val_acc = val_metrics['accuracy']
-            torch.save({
-                'epoch': epoch,
-                'model_state_dict': model.state_dict(),
-                'optimizer_state_dict': optimizer.state_dict(),
-                'val_accuracy': best_val_acc,
-                'config': config
-            }, output_dir / 'best_model.pt')
-            print(f"  ✓ New best model saved (acc: {best_val_acc:.4f})")
+        # Training loop for this fold
+        best_val_acc = 0.0
+        train_cfg = config['training']
         
-        # Save periodic checkpoint
-        if epoch % config['experiment'].get('save_every', 5) == 0:
-            torch.save({
-                'epoch': epoch,
-                'model_state_dict': model.state_dict(),
-                'optimizer_state_dict': optimizer.state_dict(),
-                'scheduler_state_dict': scheduler.state_dict(),
-            }, output_dir / f'checkpoint_epoch_{epoch:03d}.pt')
+        for epoch in range(1, train_cfg['epochs'] + 1):
+            # Train
+            train_metrics = train_epoch(
+                model, train_loader, optimizer, scaler,
+                config, device, epoch, writer
+            )
+            
+            # Validate
+            val_metrics = validate(
+                model, val_loader, config, device, epoch, writer, power_meter
+            )
+            
+            # Scheduler step
+            scheduler.step()
+            
+            # Print epoch summary
+            print(f"  Epoch {epoch:03d} | "
+                  f"Train/Val Acc: {train_metrics['accuracy']:.4f}/{val_metrics['accuracy']:.4f} | "
+                  f"Loss: {train_metrics['loss']:.4f}/{val_metrics['loss']:.4f} | "
+                  f"Gate: {train_metrics['gate_mean']:.3f}")
+            
+            # Save best model for this fold
+            if val_metrics['accuracy'] > best_val_acc:
+                best_val_acc = val_metrics['accuracy']
+                torch.save({
+                    'fold': fold_idx + 1,
+                    'epoch': epoch,
+                    'model_state_dict': model.state_dict(),
+                    'val_accuracy': best_val_acc,
+                    'config': config
+                }, output_dir / f'best_model_fold_{fold_idx + 1}.pt')
+            
+            # Early stopping
+            if early_stopping(val_metrics['accuracy']):
+                print(f"  Early stopping triggered at epoch {epoch}")
+                break
         
-        # Early stopping
-        if early_stopping(val_metrics['accuracy']):
-            print(f"\nEarly stopping triggered at epoch {epoch}")
-            break
+        # Store fold results
+        fold_results.append({
+            'fold': fold_idx + 1,
+            'best_val_acc': best_val_acc,
+            'final_val_metrics': val_metrics
+        })
+        print(f"Fold {fold_idx + 1} Complete: Best Val Acc = {best_val_acc:.4f}")
     
-    print("=" * 80)
-    print(f"Training complete! Best validation accuracy: {best_val_acc:.4f}")
-    print(f"Model saved to: {output_dir / 'best_model.pt'}")
+    # ===== Aggregate Results =====
+    print(f"\n{'=' * 80}")
+    print("K-Fold Cross-Validation Results")
+    print(f"{'=' * 80}")
     
-    # Final test
-    print("\nRunning final test...")
+    accuracies = [r['best_val_acc'] for r in fold_results]
+    print(f"Fold Accuracies: {[f'{a:.4f}' for a in accuracies]}")
+    print(f"Mean Accuracy:   {np.mean(accuracies):.4f} ± {np.std(accuracies):.4f}")
+    
+    # Save summary
+    with open(output_dir / 'kfold_summary.yaml', 'w') as f:
+        yaml.dump({
+            'k_folds': k_folds,
+            'fold_results': fold_results,
+            'mean_accuracy': float(np.mean(accuracies)),
+            'std_accuracy': float(np.std(accuracies))
+        }, f)
+    
+    # ===== Final Test on Fold 10 =====
+    print("\nRunning final test on held-out Fold 10...")
+    
+    # Use best fold model for test
+    best_fold = np.argmax(accuracies) + 1
+    print(f"Using best fold model: Fold {best_fold}")
+    
+    test_loader = create_test_dataloader(config)
     model.load_state_dict(
-        torch.load(output_dir / 'best_model.pt')['model_state_dict']
+        torch.load(output_dir / f'best_model_fold_{best_fold}.pt')['model_state_dict']
     )
+    
     test_metrics = validate(
-        model, test_loader, config, device, epoch, writer, power_meter
+        model, test_loader, config, device, 0, writer, power_meter
     )
-    print(f"Test Accuracy: {test_metrics['accuracy']:.4f}")
-    print(f"Test Latency: {test_metrics['latency_ms']:.2f} ms/sample")
-    print(f"Test Energy: {test_metrics['energy_mj']:.2f} mJ/sample")
+    
+    print(f"\nTest Results (Fold 10):")
+    print(f"  Accuracy: {test_metrics['accuracy']:.4f}")
+    print(f"  Latency:  {test_metrics['latency_ms']:.2f} ms/sample")
+    print(f"  Energy:   {test_metrics['energy_mj']:.2f} mJ/sample")
     
     writer.close()
     
-    return best_val_acc
+    return np.mean(accuracies)
 
 
 if __name__ == '__main__':

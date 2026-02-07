@@ -84,8 +84,10 @@ class BeatPatternExtractor(nn.Module):
     Captures QRS complex and RR intervals using larger kernels
     and multi-scale spiking attention.
     
+    Uses Depthwise Separable Convolution for efficiency.
+    
     Input: (batch, 256, 5000)
-    Output: (batch, 128, 2500)
+    Output: (batch, 128, 2500), reg_loss
     """
     
     def __init__(
@@ -94,17 +96,32 @@ class BeatPatternExtractor(nn.Module):
         out_channels: int = 128,
         kernel_size: int = 9,
         weight_bits: int = 1,
-        num_heads: int = 3
+        num_heads: int = 3,
+        timesteps: int = 4
     ):
         super().__init__()
+        self.timesteps = timesteps
         
-        # Strided convolution for downsampling
-        self.conv = QuantizedConv1d(
-            in_channels, out_channels, kernel_size,
+        # Depthwise convolution (per-channel, strided for downsampling)
+        self.depthwise = QuantizedConv1d(
+            in_channels, in_channels, kernel_size,
             stride=2, padding=kernel_size // 2,
+            groups=in_channels, weight_bits=weight_bits
+        )
+        
+        # Pointwise convolution (channel mixing)
+        self.pointwise = QuantizedConv1d(
+            in_channels, out_channels, kernel_size=1,
             weight_bits=weight_bits
         )
+        
         self.bn = nn.BatchNorm1d(out_channels)
+        
+        # LIF Neuron (true spiking activation)
+        self.lif = QuantLIFNeuron(
+            threshold=1.0, tau=2.0,
+            potential_bits=8, spike_regularization=0.01
+        )
         
         # Multi-scale spiking attention
         self.mssa = MultiScaleSpikingAttention(
@@ -115,18 +132,20 @@ class BeatPatternExtractor(nn.Module):
             global_pool=16
         )
     
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Args:
             x: (batch, 256, 5000)
         Returns:
-            (batch, 128, 2500)
+            Tuple of (output, reg_loss)
+            - output: (batch, 128, 2500)
         """
-        x = self.conv(x)
+        x = self.depthwise(x)
+        x = self.pointwise(x)
         x = self.bn(x)
-        x = F.elu(x)
+        x, _, reg_loss = self.lif(x, timesteps=self.timesteps)
         x = self.mssa(x)
-        return x
+        return x, reg_loss
 
 
 class RhythmPatternExtractor(nn.Module):
@@ -136,8 +155,10 @@ class RhythmPatternExtractor(nn.Module):
     Captures heart rate variability and arrhythmia patterns
     using large kernels and global attention.
     
+    Uses Depthwise Separable Convolution for efficiency.
+    
     Input: (batch, 128, 2500)
-    Output: (batch, 64, 625)
+    Output: (batch, 64, 625), reg_loss
     """
     
     def __init__(
@@ -145,33 +166,50 @@ class RhythmPatternExtractor(nn.Module):
         in_channels: int = 128,
         out_channels: int = 64,
         kernel_size: int = 27,
-        weight_bits: int = 1
+        weight_bits: int = 1,
+        timesteps: int = 4
     ):
         super().__init__()
+        self.timesteps = timesteps
         
-        # Large kernel for rhythm patterns
-        self.conv = QuantizedConv1d(
-            in_channels, out_channels, kernel_size,
+        # Depthwise convolution (per-channel, strided for downsampling)
+        self.depthwise = QuantizedConv1d(
+            in_channels, in_channels, kernel_size,
             stride=4, padding=kernel_size // 2,
+            groups=in_channels, weight_bits=weight_bits
+        )
+        
+        # Pointwise convolution (channel mixing)
+        self.pointwise = QuantizedConv1d(
+            in_channels, out_channels, kernel_size=1,
             weight_bits=weight_bits
         )
+        
         self.bn = nn.BatchNorm1d(out_channels)
+        
+        # LIF Neuron (true spiking activation)
+        self.lif = QuantLIFNeuron(
+            threshold=1.0, tau=2.0,
+            potential_bits=8, spike_regularization=0.01
+        )
         
         # Global attention
         self.global_attn = GlobalSpikingAttention(out_channels, num_heads=1)
     
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Args:
             x: (batch, 128, 2500)
         Returns:
-            (batch, 64, 625)
+            Tuple of (output, reg_loss)
+            - output: (batch, 64, 625)
         """
-        x = self.conv(x)
+        x = self.depthwise(x)
+        x = self.pointwise(x)
         x = self.bn(x)
-        x = F.elu(x)
+        x, _, reg_loss = self.lif(x, timesteps=self.timesteps)
         x = self.global_attn(x)
-        return x
+        return x, reg_loss
 
 
 class TemporalFusionBlock(nn.Module):
@@ -302,15 +340,18 @@ class ClassicalPath(nn.Module):
             - reg_loss: scalar spike regularization loss
         """
         # Stage 1: Local patterns
-        s1, reg_loss = self.stage1(x)  # (batch, 256, 5000)
+        s1, reg_loss_1 = self.stage1(x)  # (batch, 256, 5000)
         
         # Stage 2: Beat patterns
-        s2 = self.stage2(s1)  # (batch, 128, 2500)
+        s2, reg_loss_2 = self.stage2(s1)  # (batch, 128, 2500)
         
         # Stage 3: Rhythm patterns
-        s3 = self.stage3(s2)  # (batch, 64, 625)
+        s3, reg_loss_3 = self.stage3(s2)  # (batch, 64, 625)
+        
+        # Aggregate spike regularization loss from all stages
+        total_reg_loss = reg_loss_1 + reg_loss_2 + reg_loss_3
         
         # Fuse multi-scale features
         features = self.fusion(s1, s2, s3)  # (batch, 128)
         
-        return features, reg_loss
+        return features, total_reg_loss

@@ -37,6 +37,9 @@ from .hybrid_model import (
     HybridModelConfig,
     create_model,
 )
+from .resnet import ResNet1D
+from .vit import ViT1D, ViT1DConfig
+from .comparison_models import create_comparison_model, MODEL_REGISTRY
 
 __all__ = [
     # Main model
@@ -64,4 +67,11 @@ __all__ = [
     # Fusion
     'GatedFusionModule',
     'ClassificationHead',
+
+    # Comparison study
+    'ResNet1D',
+    'ViT1D',
+    'ViT1DConfig',
+    'create_comparison_model',
+    'MODEL_REGISTRY',
 ]

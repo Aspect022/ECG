@@ -101,6 +101,9 @@ def load_config(path: str) -> dict:
 # Data
 # ════════════════════════════════════════════════════════
 
+# Fix: Define fixed classes to ensure consistent mapping across all folds
+FIXED_CLASSES = ['NORM', 'MI', 'STTC', 'CD', 'HYP']
+
 def create_fold_dataloaders(config: dict, train_folds: list,
                             val_folds: list) -> tuple:
     data_cfg = config['data']
@@ -114,6 +117,11 @@ def create_fold_dataloaders(config: dict, train_folds: list,
         input_length=data_cfg['input_length'],
         augment=data_cfg.get('augment', True),
     )
+    # Fix: Inject classes into train dataset
+    train_ds.classes = FIXED_CLASSES
+    # Re-process labels with fixed classes
+    train_ds.labels, train_ds.mlb = train_ds._process_labels()
+
     val_ds = PTBXLDataset(
         data_path=data_cfg['data_path'],
         sampling_rate=data_cfg['sampling_rate'],
@@ -122,6 +130,10 @@ def create_fold_dataloaders(config: dict, train_folds: list,
         input_length=data_cfg['input_length'],
         augment=False,
     )
+    # Fix: Inject classes into val dataset
+    val_ds.classes = FIXED_CLASSES
+    # Re-process labels with fixed classes
+    val_ds.labels, val_ds.mlb = val_ds._process_labels()
 
     train_loader = DataLoader(
         train_ds,
@@ -153,6 +165,11 @@ def create_test_dataloader(config: dict) -> DataLoader:
         input_length=data_cfg['input_length'],
         augment=False,
     )
+    # Fix: Inject classes into test dataset
+    test_ds.classes = FIXED_CLASSES
+    # Re-process labels with fixed classes
+    test_ds.labels, test_ds.mlb = test_ds._process_labels()
+
     return DataLoader(
         test_ds,
         batch_size=data_cfg.get('test_batch_size', data_cfg['batch_size']),
@@ -208,11 +225,18 @@ def train_epoch(model, loader, optimizer, scaler, config, device,
 
         with torch.no_grad():
             total_loss += loss.item() * accum
-            if label.dim() > 1:
+            
+            # Fix: Match accuracy calculation to loss function
+            if config['training'].get('criterion') == 'bce_with_logits':
+                # Multi-label (Sigmoid)
                 preds = (torch.sigmoid(logits) > 0.5).float()
                 correct = (preds == label).all(dim=1).sum().item()
             else:
-                correct = (logits.argmax(1) == label).sum().item()
+                # Single-label (Argmax) - Matches CrossEntropy
+                lbl = label.argmax(dim=1) if label.dim() > 1 else label
+                preds = logits.argmax(dim=1)
+                correct = (preds == lbl).sum().item()
+            
             total_correct += correct
             total_samples += signal.shape[0]
             gate_values.append(output['gate'].mean().item())
@@ -262,7 +286,9 @@ def validate(model, loader, config, device, epoch, writer, prefix,
             else:
                 lbl = label.argmax(dim=1) if label.dim() > 1 else label
                 loss = F.cross_entropy(logits, lbl)
-                correct = (logits.argmax(1) == lbl).sum().item()
+                # Fix: Single-label accuracy (Argmax)
+                preds = logits.argmax(1)
+                correct = (preds == lbl).sum().item()
 
         if device.type == 'cuda':
             torch.cuda.synchronize()

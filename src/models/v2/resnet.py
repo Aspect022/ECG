@@ -66,7 +66,7 @@ class ResNet1D(nn.Module):
         self,
         in_channels: int = 12,
         num_classes: int = 5,
-        base_channels: int = 64,
+        base_channels: int = 32,
         dropout: float = 0.3,
     ):
         super().__init__()
@@ -82,11 +82,11 @@ class ResNet1D(nn.Module):
             nn.MaxPool1d(kernel_size=3, stride=2, padding=1),
         )
 
-        # Residual layers
-        self.layer1 = self._make_layer(base_channels, 2, stride=1)
-        self.layer2 = self._make_layer(base_channels * 2, 2, stride=2)
-        self.layer3 = self._make_layer(base_channels * 4, 2, stride=2)
-        self.layer4 = self._make_layer(base_channels * 8, 2, stride=2)
+        # Residual layers (ResNet10-style: 1 block per stage)
+        self.layer1 = self._make_layer(base_channels, 1, stride=1)
+        self.layer2 = self._make_layer(base_channels * 2, 1, stride=2)
+        self.layer3 = self._make_layer(base_channels * 4, 1, stride=2)
+        self.layer4 = self._make_layer(base_channels * 8, 1, stride=2)
 
         # Global pool + classifier
         self.global_pool = nn.AdaptiveAvgPool1d(1)

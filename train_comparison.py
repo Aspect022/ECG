@@ -150,6 +150,19 @@ def create_fold_dataloaders(config: dict, train_folds: list,
         num_workers=exp_cfg['num_workers'],
         pin_memory=exp_cfg['pin_memory'],
     )
+    
+    # --- LOG CLASS DISTRIBUTION ---
+    print(f"  Class Distribution (Filtered):")
+    train_labels = np.array(train_ds.labels)
+    counts = train_labels.sum(axis=0)
+    for i, cls in enumerate(FIXED_CLASSES):
+        print(f"    {cls:5s}: {int(counts[i]):>5d} samples")
+        
+    if counts.sum() == 0:
+        print("  [CRITICAL] All labels are ZERO after filtering! Check mapping.")
+    elif (counts > 0).sum() < 2:
+        print("  [WARNING] Only ONE class has samples. Accuracy will be 1.0 trivially.")
+
     return train_loader, val_loader
 
 
@@ -197,9 +210,18 @@ def train_epoch(model, loader, optimizer, scaler, config, device,
     pbar = tqdm(loader, desc=f'[{prefix}] Epoch {epoch}', leave=False)
     optimizer.zero_grad()
 
+    # Diagnostic flag
+    first_batch = True
+
     for idx, batch in enumerate(pbar):
         signal = batch['signal'].to(device)
         label = batch['label'].to(device)
+
+        if first_batch and epoch == 1:
+            # Check for label triviality
+            if label.std() == 0:
+                print(f"\n  [WARNING] First batch labels are identical! Value={label[0].tolist()}")
+            first_batch = False
 
         with autocast(enabled=config['experiment'].get('use_amp', True)):
             output = model(signal, return_gate=True)

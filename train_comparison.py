@@ -1,3 +1,13 @@
+import torch
+
+torch.backends.cudnn.benchmark = True
+
+torch.backends.cuda.matmul.allow_tf32 = True
+
+torch.backends.cudnn.allow_tf32 = True
+
+torch.set_float32_matmul_precision("high")
+
 """
 Unified Comparison Training Script.
 
@@ -120,7 +130,7 @@ def create_fold_dataloaders(config: dict, train_folds: list,
     # Fix: Inject classes into train dataset
     train_ds.classes = FIXED_CLASSES
     # Re-process labels with fixed classes
-    train_ds.labels, train_ds.mlb = train_ds._process_labels()
+    # removed broken call
 
     val_ds = PTBXLDataset(
         data_path=data_cfg['data_path'],
@@ -133,7 +143,7 @@ def create_fold_dataloaders(config: dict, train_folds: list,
     # Fix: Inject classes into val dataset
     val_ds.classes = FIXED_CLASSES
     # Re-process labels with fixed classes
-    val_ds.labels, val_ds.mlb = val_ds._process_labels()
+# removed broken label processing
 
     train_loader = DataLoader(
         train_ds,
@@ -181,7 +191,7 @@ def create_test_dataloader(config: dict) -> DataLoader:
     # Fix: Inject classes into test dataset
     test_ds.classes = FIXED_CLASSES
     # Re-process labels with fixed classes
-    test_ds.labels, test_ds.mlb = test_ds._process_labels()
+# removed broken label processing
 
     return DataLoader(
         test_ds,

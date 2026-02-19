@@ -6,7 +6,7 @@ experiment:
   use_amp: true
 
 data:
-  data_path: "data/ptbxl"
+  data_path: "/home/rajat/datasets/PTBXL"
   task: "diagnostic"
   sampling_rate: 500
   input_length: 5000

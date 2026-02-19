@@ -1,0 +1,50 @@
+# ECG Classification: Journal-Level Implementation
+# CPU-Optimized for AMD Ryzen 5000 Series
+
+# Core Dependencies
+numpy>=1.24.0
+scipy>=1.10.0
+scikit-learn>=1.3.0
+pandas>=2.0.0
+
+# Image Processing
+Pillow>=9.5.0
+opencv-python>=4.8.0
+
+# Visualization
+matplotlib>=3.7.0
+seaborn>=0.12.0
+
+# Configuration
+PyYAML>=6.0
+omegaconf>=2.3.0
+
+# Logging and Tracking
+tensorboard>=2.13.0
+tqdm>=4.65.0
+
+# Spiking Neural Networks
+spikingjelly>=0.0.0.0.14
+
+# Quantum ML (Optional - for PennyLane hybrid models)
+pennylane>=0.35.0
+pennylane-qiskit>=0.35.0
+
+# Hardware Monitoring
+nvidia-ml-py>=12.535.0
+
+# Model Analysis
+thop>=0.1.1  # For FLOPs counting
+fvcore>=0.1.5  # Alternative FLOPs counter
+
+# Testing
+pytest>=7.3.0
+pytest-cov>=4.1.0
+
+# Utilities
+einops>=0.6.1  # Tensor operations
+timm>=0.9.0  # Pre-trained models and utilities
+
+# Jupyter (for development)
+jupyter>=1.0.0
+ipywidgets>=8.0.0

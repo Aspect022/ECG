@@ -17,7 +17,7 @@ experiment:
 
 data:
   dataset: "ptbxl"
-  data_path: "d:/Projects/ECG/data/ptbxl"
+  data_path: "/home/rajat/datasets/PTBXL"
   sampling_rate: 500
   input_length: 5000
   batch_size: 64

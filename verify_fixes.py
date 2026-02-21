@@ -14,7 +14,7 @@ from src.data.ptbxl import PTBXLDataset
 FIXED_CLASSES = ['NORM', 'MI', 'STTC', 'CD', 'HYP']
 
 def verify_dataset_fixes():
-    data_path = "d:/Projects/ECG/data/ptbxl"
+    data_path = "/home/rajat/datasets/PTBXL"
     
     if not os.path.exists(data_path):
         print(f"[ERROR] Data path not found: {data_path}")

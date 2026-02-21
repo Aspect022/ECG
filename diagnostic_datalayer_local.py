@@ -49,7 +49,7 @@ class PTBXLDatasetCheck:
         return None, None
 
 def diagnostic_check():
-    data_path = "d:/Projects/ECG/data/ptbxl"
+    data_path = "/home/rajat/datasets/PTBXL"
     if not os.path.exists(data_path):
         print(f"Error: {data_path} not found")
         return

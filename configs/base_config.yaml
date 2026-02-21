@@ -16,7 +16,7 @@ experiment:
 
 data:
   dataset: "ptbxl"
-  data_path: "d:/Projects/ECG/data/ptbxl" # Update if needed
+  data_path: "/home/rajat/datasets/PTBXL" # Update if needed
   sampling_rate: 100
   input_length: 1000 # 10 seconds @ 100Hz
   batch_size: 128 # Adjusted for RTX 5050 (8GB VRAM)

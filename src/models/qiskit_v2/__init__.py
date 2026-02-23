@@ -1,0 +1,76 @@
+"""
+Qiskit V2.0 Hybrid Quantum-Classical ECG Model.
+
+This module provides the dual-path architecture using Qiskit for the quantum circuit.
+"""
+
+from .attention import (
+    MultiScaleSpikingAttention,
+    GlobalSpikingAttention,
+    LocalWindowAttention,
+    RegionalDilatedAttention,
+    GlobalPooledAttention,
+)
+from .classical_path import (
+    ClassicalPath,
+    LocalPatternExtractor,
+    BeatPatternExtractor,
+    RhythmPatternExtractor,
+    TemporalFusionBlock,
+)
+from .quantum_circuit import (
+    QiskitQuantumCircuit,
+    QuantumMeasurement,
+)
+from .quantum_path import (
+    QuantumPath,
+    FeatureCompressor,
+    QuantumEncodingLayer,
+)
+from .fusion import (
+    GatedFusionModule,
+    ClassificationHead,
+)
+from .hybrid_model import (
+    HybridQuantumClassicalECG,
+    HybridModelConfig,
+    create_model,
+)
+from .resnet import ResNet1D
+from .vit import ViT1D, ViT1DConfig
+from .comparison_models import create_comparison_model, MODEL_REGISTRY
+
+__all__ = [
+    # Main model
+    'HybridQuantumClassicalECG',
+    'HybridModelConfig',
+    'create_model',
+    
+    # Classical path
+    'ClassicalPath',
+    'LocalPatternExtractor',
+    'BeatPatternExtractor',
+    'RhythmPatternExtractor',
+    'TemporalFusionBlock',
+    
+    # Attention
+    'MultiScaleSpikingAttention',
+    'GlobalSpikingAttention',
+    
+    # Quantum path
+    'QuantumPath',
+    'QiskitQuantumCircuit',
+    'QuantumMeasurement',
+    'FeatureCompressor',
+    
+    # Fusion
+    'GatedFusionModule',
+    'ClassificationHead',
+
+    # Comparison study
+    'ResNet1D',
+    'ViT1D',
+    'ViT1DConfig',
+    'create_comparison_model',
+    'MODEL_REGISTRY',
+]

@@ -407,14 +407,17 @@ def validate(
     }
 
 
-def train(config_path: str, debug: bool = False, k_folds: int = 5):
+def train(config_or_path, debug: bool = False, k_folds: int = 5):
     """Main training function with K-Fold Cross-Validation.
     
     Trains `k_folds` models, each on a different train/val split.
     Aggregates metrics across all folds for robust evaluation.
     """
     # Load config
-    config = load_config(config_path)
+    if isinstance(config_or_path, str):
+        config = load_config(config_or_path)
+    else:
+        config = config_or_path
     
     if debug:
         config['training']['epochs'] = 2

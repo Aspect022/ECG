@@ -11,6 +11,7 @@ Optimized for RTX 5050 (8GB VRAM) with:
 
 import os
 import sys
+import random
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -26,6 +27,12 @@ from pathlib import Path
 from datetime import datetime
 from tqdm import tqdm
 import numpy as np
+import pandas as pd
+
+try:
+    import pynvml
+except ImportError:
+    pynvml = None
 
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent / 'src'))
@@ -45,11 +52,11 @@ class EarlyStopping:
         self.patience = patience
         self.min_delta = min_delta
         self.counter = 0
-        self.best_score = None
+        self.best_score = -float('inf')
         self.early_stop = False
     
     def __call__(self, val_score: float) -> bool:
-        if self.best_score is None:
+        if self.best_score == -float('inf'):
             self.best_score = val_score
         elif val_score < self.best_score + self.min_delta:
             self.counter += 1
@@ -60,6 +67,19 @@ class EarlyStopping:
             self.counter = 0
         
         return self.early_stop
+
+
+def set_seed(seed: int = 42):
+    """Set seeds for reproducibility."""
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+    os.environ['PYTHONHASHSEED'] = str(seed)
+    print(f"Random seed set to: {seed}")
 
 
 def load_config(config_path: str) -> dict:
@@ -252,7 +272,7 @@ def train_epoch(
             # Accuracy
             if label.dim() > 1:
                 preds = (torch.sigmoid(logits) > 0.5).float()
-                correct = (preds == label).all(dim=1).sum().item()
+                correct = torch.all(preds == label, dim=1).sum().item()
             else:
                 preds = logits.argmax(dim=1)
                 correct = (preds == label).sum().item()
@@ -446,7 +466,9 @@ def validate(
             target_layer = None
             if hasattr(model, 'classical_path'):
                 for module in reversed(list(model.classical_path.modules())):
-                    if isinstance(module, nn.Conv1d):
+                    # Check for both standard and quantized convolutions
+                    from src.models.quantization.quantized_layers import QuantizedConv1d
+                    if isinstance(module, nn.Conv1d) or isinstance(module, QuantizedConv1d):
                         target_layer = module
                         break
             
@@ -482,16 +504,27 @@ def validate(
 
 
 def train(config_or_path, debug: bool = False, k_folds: int = 5):
-    """Main training function with K-Fold Cross-Validation.
-    
-    Trains `k_folds` models, each on a different train/val split.
-    Aggregates metrics across all folds for robust evaluation.
-    """
+    """Main training function with K-Fold Cross-Validation."""
     # Load config
     if isinstance(config_or_path, str):
         config = load_config(config_or_path)
     else:
         config = config_or_path
+    
+    # Set seed for reproducibility
+    seed = config['experiment'].get('seed', 42)
+    set_seed(seed)
+
+    # Log GPU info
+    if pynvml is not None:
+        try:
+            pynvml.nvmlInit()
+            handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+            info = pynvml.nvmlDeviceGetMemoryInfo(handle)
+            name = pynvml.nvmlDeviceGetName(handle)
+            print(f"GPU: {name} | Total Memory: {info.total / 1024**2:.0f} MB")
+        except Exception:
+            print("GPU info could not be retrieved via pynvml.")
     
     if debug:
         config['training']['epochs'] = 2
@@ -581,52 +614,87 @@ def train(config_or_path, debug: bool = False, k_folds: int = 5):
         # Training loop for this fold
         best_val_acc = 0.0
         train_cfg = config['training']
+        fold_history = []
         
-        for epoch in range(1, train_cfg['epochs'] + 1):
-            # Train
-            train_metrics = train_epoch(
-                model, train_loader, optimizer, scaler,
-                config, device, epoch, writer
-            )
-            
-            # Validate
-            val_metrics = validate(
-                model, val_loader, config, device, epoch, writer, power_meter, 
-                output_dir=str(output_dir) if epoch == train_cfg['epochs'] else None
-            )
-            
-            # Scheduler step
-            scheduler.step()
-            
-            # Print epoch summary
-            print(f"  Epoch {epoch:03d} | "
-                  f"Train/Val Acc: {train_metrics['accuracy']:.4f}/{val_metrics['accuracy']:.4f} | "
-                  f"Loss: {train_metrics['loss']:.4f}/{val_metrics['loss']:.4f} | "
-                  f"Gate: {train_metrics['gate_mean']:.3f}")
-            
-            # Save best model for this fold
-            if val_metrics['accuracy'] > best_val_acc:
-                best_val_acc = val_metrics['accuracy']
-                torch.save({
+        # Create fold-specific output directory
+        fold_output_dir = output_dir / f'fold_{fold_idx + 1}'
+        fold_output_dir.mkdir(parents=True, exist_ok=True)
+        
+        try:
+            for epoch in range(1, train_cfg['epochs'] + 1):
+                # Train
+                train_metrics = train_epoch(
+                    model, train_loader, optimizer, scaler,
+                    config, device, epoch, writer
+                )
+                
+                # Validate
+                val_metrics = validate(
+                    model, val_loader, config, device, epoch, writer, power_meter, 
+                    output_dir=str(fold_output_dir) if epoch == train_cfg['epochs'] else None
+                )
+                
+                # Scheduler step
+                scheduler.step()
+                
+                # Record results
+                epoch_results = {
+                    'epoch': epoch,
+                    'train_acc': train_metrics['accuracy'],
+                    'train_loss': train_metrics['loss'],
+                    'val_acc': val_metrics['accuracy'],
+                    'val_loss': val_metrics['loss'],
+                    'lr': optimizer.param_groups[0]['lr']
+                }
+                # Add advanced metrics
+                epoch_results.update({f'val_{k}': v for k, v in val_metrics.items() if k not in epoch_results})
+                fold_history.append(epoch_results)
+                
+                # Print epoch summary
+                print(f"  Epoch {epoch:03d} | "
+                      f"Train/Val Acc: {train_metrics['accuracy']:.4f}/{val_metrics['accuracy']:.4f} | "
+                      f"Loss: {train_metrics['loss']:.4f}/{val_metrics['loss']:.4f}")
+                
+                # Save PER-EPOCH checkpoint
+                checkpoint = {
                     'fold': fold_idx + 1,
                     'epoch': epoch,
                     'model_state_dict': model.state_dict(),
-                    'val_accuracy': best_val_acc,
+                    'optimizer_state_dict': optimizer.state_dict(),
+                    'val_metrics': val_metrics,
                     'config': config
-                }, output_dir / f'best_model_fold_{fold_idx + 1}.pt')
+                }
+                torch.save(checkpoint, fold_output_dir / f'checkpoint_epoch_{epoch}.pt')
+                
+                # Save best model for this fold
+                if val_metrics['accuracy'] > best_val_acc:
+                    best_val_acc = val_metrics['accuracy']
+                    torch.save(checkpoint, fold_output_dir / f'best_model.pt')
+                
+                # Early stopping
+                if early_stopping(val_metrics['accuracy']):
+                    print(f"  Early stopping triggered at epoch {epoch}")
+                    break
+                    
+        except Exception as e:
+            print(f"  ERROR in training loop for fold {fold_idx + 1}: {e}")
+            import traceback
+            traceback.print_exc()
+        finally:
+            # Save fold history to CSV
+            import pandas as pd
+            history_df = pd.DataFrame(fold_history)
+            history_df.to_csv(fold_output_dir / 'history.csv', index=False)
+            print(f"  Fold history saved to {fold_output_dir / 'history.csv'}")
             
-            # Early stopping
-            if early_stopping(val_metrics['accuracy']):
-                print(f"  Early stopping triggered at epoch {epoch}")
-                break
-        
         # Store fold results
         fold_results.append({
             'fold': fold_idx + 1,
             'best_val_acc': best_val_acc,
-            'final_val_metrics': val_metrics
+            'final_val_metrics': val_metrics if 'val_metrics' in locals() else {}
         })
         print(f"Fold {fold_idx + 1} Complete: Best Val Acc = {best_val_acc:.4f}")
+
     
     # ===== Aggregate Results =====
     print(f"\n{'=' * 80}")
@@ -655,7 +723,7 @@ def train(config_or_path, debug: bool = False, k_folds: int = 5):
     
     test_loader = create_test_dataloader(config)
     model.load_state_dict(
-        torch.load(output_dir / f'best_model_fold_{best_fold}.pt')['model_state_dict']
+        torch.load(output_dir / f'fold_{best_fold}' / 'best_model.pt')['model_state_dict']
     )
     
     test_metrics = validate(

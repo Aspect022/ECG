@@ -37,27 +37,37 @@ class PennyLaneQuantumCircuit(nn.Module):
     Args:
         n_qubits: Number of qubits (default: 8)
         n_layers: Number of variational layers (default: 3)
+        rotation_axes: String of axes to apply per layer (e.g. 'y', 'z', or 'yy', 'xy', 'zx', 'xyz')
+        entanglement: Entanglement topology ('circular' or 'none')
     """
 
-    def __init__(self, n_qubits: int = 8, n_layers: int = 3):
+    def __init__(
+        self, 
+        n_qubits: int = 8, 
+        n_layers: int = 3, 
+        rotation_axes: str = 'yz',
+        entanglement: str = 'circular'
+    ):
         super().__init__()
 
         self.n_qubits = n_qubits
         self.n_layers = n_layers
+        self.rotation_axes = rotation_axes.lower()
+        self.entanglement = entanglement.lower()
 
         # PennyLane device (statevector simulator)
         dev = qml.device("default.qubit", wires=n_qubits)
 
         # Define the QNode
         @qml.qnode(dev, interface="torch", diff_method="backprop")
-        def circuit(inputs, theta, omega):
+        def circuit(inputs, **rot_params):
             """
             Variational quantum circuit.
 
             Args:
                 inputs: (n_qubits,) encoding angles
-                theta:  (n_layers, n_qubits) RY rotation params
-                omega:  (n_layers, n_qubits) RZ rotation params
+                rot_params: Dynamically passed list of parameter tensors 
+                            corresponding to rotation_axes
             """
             # === Amplitude Encoding ===
             for i in range(n_qubits):
@@ -65,32 +75,36 @@ class PennyLaneQuantumCircuit(nn.Module):
 
             # === Variational Layers ===
             for layer in range(n_layers):
-                # RY rotations (trainable)
-                for i in range(n_qubits):
-                    qml.RY(theta[layer, i], wires=i)
+                for i, axis in enumerate(self.rotation_axes):
+                    params = rot_params[f"theta_{i}_{axis}"]
+                    
+                    if axis == 'x':
+                        for q in range(n_qubits):
+                            qml.RX(params[layer, q], wires=q)
+                    elif axis == 'y':
+                        for q in range(n_qubits):
+                            qml.RY(params[layer, q], wires=q)
+                    elif axis == 'z':
+                        for q in range(n_qubits):
+                            qml.RZ(params[layer, q], wires=q)
+                    else:
+                        raise ValueError(f"Unknown rotation axis: {axis}")
 
-                # Circular entanglement: CNOT(i, (i+1) % n)
-                for i in range(n_qubits):
-                    qml.CNOT(wires=[i, (i + 1) % n_qubits])
-
-                # RZ rotations (trainable)
-                for i in range(n_qubits):
-                    qml.RZ(omega[layer, i], wires=i)
+                    # Circular entanglement: CNOT(i, (i+1) % n)
+                    if i == 0 and self.entanglement == 'circular':
+                        for q in range(n_qubits):
+                            qml.CNOT(wires=[q, (q + 1) % n_qubits])
 
             # Measure Pauli-Z on each qubit
             return [qml.expval(qml.PauliZ(i)) for i in range(n_qubits)]
 
         # Define weight shapes matching the vectorized version
-        weight_shapes = {
-            "theta": (n_layers, n_qubits),
-            "omega": (n_layers, n_qubits),
-        }
-
-        # Initialize weights to match vectorized version (mean=0, std=0.1)
-        init_method = {
-            "theta": lambda t: nn.init.normal_(t, mean=0.0, std=0.1),
-            "omega": lambda t: nn.init.normal_(t, mean=0.0, std=0.1),
-        }
+        weight_shapes = {}
+        init_method = {}
+        for i, axis in enumerate(self.rotation_axes):
+            k = f"theta_{i}_{axis}"
+            weight_shapes[k] = (n_layers, n_qubits)
+            init_method[k] = lambda t: nn.init.normal_(t, mean=0.0, std=0.1)
 
         # Wrap into TorchLayer
         self.qlayer = qml.qnn.TorchLayer(

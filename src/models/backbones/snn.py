@@ -253,6 +253,103 @@ class PLIFNeuron(LIFNeuron):
         return spike, mem
 
 
+class QuadraticLIFNeuron(LIFNeuron):
+    """
+    Quadratic Leaky Integrate-and-Fire (Q-LIF) neuron.
+    
+    The membrane potential evolves as:
+        dV/dt ~ V^2 + I
+    
+    Approximated discretely as:
+        V[t] = decay * V[t-1] + a * (V[t-1] - v_rest) * (V[t-1] - v_c) + I[t]
+    
+    Args:
+        a: Quadratic coefficient
+        v_rest: Resting potential
+        v_c: Critical voltage (threshold for non-linear growth)
+    """
+    def __init__(
+        self,
+        threshold: float = 1.0,
+        decay: float = 0.9,
+        surrogate: str = 'fast_sigmoid',
+        surrogate_beta: float = 10.0,
+        a: float = 0.1,
+        v_rest: float = 0.0,
+        v_c: float = 0.8,
+        learnable: bool = False,
+    ):
+        super().__init__(threshold, decay, surrogate, surrogate_beta, learnable)
+        self.a = a
+        self.v_rest = v_rest
+        self.v_c = v_c
+
+    def forward(
+        self, 
+        x: torch.Tensor, 
+        mem: Optional[torch.Tensor] = None
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        if mem is None:
+            mem = torch.zeros_like(x)
+        
+        # Q-LIF Update
+        quadratic_term = self.a * (mem - self.v_rest) * (mem - self.v_c)
+        mem = self.decay * mem + quadratic_term + x
+        
+        spike = self.spike_fn(mem - self.threshold, self.surrogate_beta)
+        mem = mem * (1.0 - spike)
+        
+        return spike, mem
+
+
+class ExponentialLIFNeuron(LIFNeuron):
+    """
+    Exponential Leaky Integrate-and-Fire (Exp-LIF) neuron.
+    
+    The membrane potential evolves as:
+        dV/dt ~ - (V - v_rest) + delta_t * exp((V - v_rh) / delta_t) + I
+    
+    Approximated discretely.
+    
+    Args:
+        delta_t: Slope factor
+        v_rh: Rheobase threshold (voltage at which exponential growth kicks in)
+    """
+    def __init__(
+        self,
+        threshold: float = 1.0,
+        decay: float = 0.9,
+        surrogate: str = 'fast_sigmoid',
+        surrogate_beta: float = 10.0,
+        delta_t: float = 0.2,
+        v_rh: float = 0.8,
+        learnable: bool = False,
+    ):
+        super().__init__(threshold, decay, surrogate, surrogate_beta, learnable)
+        self.delta_t = delta_t
+        self.v_rh = v_rh
+
+    def forward(
+        self, 
+        x: torch.Tensor, 
+        mem: Optional[torch.Tensor] = None
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        if mem is None:
+            mem = torch.zeros_like(x)
+        
+        # Exp-LIF Update
+        exp_term = self.delta_t * torch.exp((mem - self.v_rh) / self.delta_t)
+        # Prevent explosion with clamp if necessary, though typical initialization controls this
+        exp_term = torch.clamp(exp_term, max=10.0) 
+        
+        mem = self.decay * mem + exp_term + x
+        
+        spike = self.spike_fn(mem - self.threshold, self.surrogate_beta)
+        mem = mem * (1.0 - spike)
+        
+        return spike, mem
+
+
 # ============== Spiking Blocks ==============
 
 class SpikingConvBlock(nn.Module):

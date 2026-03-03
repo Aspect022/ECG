@@ -43,6 +43,29 @@ class QuantumGates:
         ], dim=-2)
         
         return gate
+        
+    @staticmethod
+    def rx_matrix(angle: torch.Tensor) -> torch.Tensor:
+        """
+        Create RX rotation matrix.
+        
+        RX(θ) = [[cos(θ/2), -i*sin(θ/2)],
+                 [-i*sin(θ/2), cos(θ/2)]]
+                 
+        Args:
+            angle: Rotation angle (batch,)
+        Returns:
+            (batch, 2, 2) rotation matrices (complex)
+        """
+        cos_half = torch.cos(angle / 2).to(torch.complex64)
+        sin_half = -1j * torch.sin(angle / 2)
+        
+        gate = torch.stack([
+            torch.stack([cos_half, sin_half], dim=-1),
+            torch.stack([sin_half, cos_half], dim=-1)
+        ], dim=-2)
+        return gate
+
     
     @staticmethod
     def rz_matrix(angle: torch.Tensor) -> torch.Tensor:
@@ -79,22 +102,33 @@ class VectorizedQuantumCircuit(nn.Module):
     Args:
         n_qubits: Number of qubits (8 default)
         n_layers: Number of variational layers (3 default)
+        rotation_axes: String of axes to apply per layer (e.g. 'y', 'z', or 'yy', 'xy', 'zx', 'xyz')
+        entanglement: Entanglement topology ('circular' or 'none')
     """
     
-    def __init__(self, n_qubits: int = 8, n_layers: int = 3):
+    def __init__(
+        self, 
+        n_qubits: int = 8, 
+        n_layers: int = 3, 
+        rotation_axes: str = 'yz',
+        entanglement: str = 'circular'
+    ):
         super().__init__()
         
         self.n_qubits = n_qubits
         self.n_layers = n_layers
         self.state_dim = 2 ** n_qubits
+        self.rotation_axes = rotation_axes.lower()
+        self.entanglement = entanglement.lower()
         
-        # Trainable rotation parameters
-        self.theta = nn.Parameter(torch.randn(n_layers, n_qubits) * 0.1)
-        self.omega = nn.Parameter(torch.randn(n_layers, n_qubits) * 0.1)
+        # Trainable rotation parameters depending on axes
+        self.params = nn.ParameterDict()
+        for i, axis in enumerate(self.rotation_axes):
+            self.params[f'theta_{i}_{axis}'] = nn.Parameter(torch.randn(n_layers, n_qubits) * 0.1)
         
         # Precompute helper tensors
         self._init_helpers()
-    
+        
     def _init_helpers(self):
         """Initialize helper tensors for efficient computation."""
         # Create Pauli-Z observable for each qubit
@@ -244,23 +278,30 @@ class VectorizedQuantumCircuit(nn.Module):
         
         # ===== Variational Layers =====
         for layer in range(self.n_layers):
-            # RY rotations (trainable)
-            for i in range(self.n_qubits):
-                angle = self.theta[layer, i].expand(batch_size)
-                gate = QuantumGates.ry_matrix(angle).to(device).to(torch.complex64)
-                state = self._apply_single_qubit_gate(state, i, gate)
-            
-            # Circular Entanglement: CNOT(i, (i+1) % n_qubits)
-            # This is a standard, robust topology used in VQCs.
-            for i in range(self.n_qubits):
-                target = (i + 1) % self.n_qubits
-                state = self._apply_cnot(state, control=i, target=target)
-            
-            # RZ rotations (trainable)
-            for i in range(self.n_qubits):
-                angle = self.omega[layer, i].expand(batch_size)
-                gate = QuantumGates.rz_matrix(angle).to(device)
-                state = self._apply_single_qubit_gate(state, i, gate)
+            for i, axis in enumerate(self.rotation_axes):
+                # Apply rotation for this axis
+                for qubit in range(self.n_qubits):
+                    angle = self.params[f'theta_{i}_{axis}'][layer, qubit].expand(batch_size)
+                    
+                    if axis == 'x':
+                        gate = QuantumGates.rx_matrix(angle).to(device)
+                    elif axis == 'y':
+                        gate = QuantumGates.ry_matrix(angle).to(device).to(torch.complex64)
+                    elif axis == 'z':
+                        gate = QuantumGates.rz_matrix(angle).to(device)
+                    else:
+                        raise ValueError(f"Unknown rotation axis: {axis}")
+                        
+                    state = self._apply_single_qubit_gate(state, qubit, gate)
+
+                # Entanglement between rotation layers (except after the last one if length > 1)
+                # Convention: standard VQC puts entanglement after the first rotation, 
+                # or interweaves them. For complete customizability we apply entanglement
+                # only once per layer, specifically after the first rotation is done.
+                if i == 0 and self.entanglement == 'circular':
+                    for q in range(self.n_qubits):
+                        target = (q + 1) % self.n_qubits
+                        state = self._apply_cnot(state, control=q, target=target)
         
         return state
     

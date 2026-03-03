@@ -225,7 +225,7 @@ class QuantLIFNeuron(nn.Module):
             mem: Initial membrane potential (optional)
             
         Returns:
-            Tuple of (spike_output, final_membrane, reg_loss)
+            Tuple of (spike_rate, final_membrane, reg_loss, additional_metrics)
         """
         batch, channels, length = x.shape
         device = x.device
@@ -260,14 +260,90 @@ class QuantLIFNeuron(nn.Module):
             
             # Accumulate
             spike_sum = spike_sum + spike
-        
+            
         # Average spike rate
         spike_rate = spike_sum / timesteps
         
-        # Spike regularization loss (encourage ~0.5 firing rate)
+        # Spike regularization loss (encourage ~0.3 firing rate by default)
         reg_loss = self.spike_reg * torch.mean((spike_rate - 0.3) ** 2)
         
-        return spike_rate, v, reg_loss
+        # Calculate additional metrics (sparsity)
+        additional_metrics = {
+            'sparsity': 1.0 - torch.mean(spike_sum / timesteps).item(),
+            'firing_rate': torch.mean(spike_rate).item()
+        }
+        
+        return spike_rate, v, reg_loss, additional_metrics
+
+class QuantQuadraticLIFNeuron(QuantLIFNeuron):
+    """
+    Quantized Quadratic LIF Neuron.
+    """
+    def __init__(self, threshold=1.0, tau=2.0, potential_bits=8, spike_regularization=0.01, learnable_tau=True, a=0.1, v_rest=0.0, v_c=0.8):
+        super().__init__(threshold, tau, potential_bits, spike_regularization, learnable_tau)
+        self.a = a
+        self.v_rest = v_rest
+        self.v_c = v_c
+        
+    def forward(self, x: torch.Tensor, timesteps: int = 4, mem: Optional[torch.Tensor] = None):
+        batch, channels, length = x.shape
+        device = x.device
+        
+        v = mem if mem is not None else torch.zeros(batch, channels, length, device=device)
+        spike_sum = torch.zeros_like(x)
+        current = x / timesteps
+        
+        for t in range(timesteps):
+            quadratic_term = self.a * (v - self.v_rest) * (v - self.v_c)
+            v = self.decay * v + quadratic_term + current
+            v = self._quantize_potential(v)
+            spike = (v >= self.threshold).float()
+            v = v * (1.0 - spike)
+            spike_sum = spike_sum + spike
+            
+        spike_rate = spike_sum / timesteps
+        reg_loss = self.spike_reg * torch.mean((spike_rate - 0.3) ** 2)
+        additional_metrics = {
+            'sparsity': 1.0 - torch.mean(spike_sum / timesteps).item(),
+            'firing_rate': torch.mean(spike_rate).item()
+        }
+        return spike_rate, v, reg_loss, additional_metrics
+
+
+class QuantExponentialLIFNeuron(QuantLIFNeuron):
+    """
+    Quantized Exponential LIF Neuron.
+    """
+    def __init__(self, threshold=1.0, tau=2.0, potential_bits=8, spike_regularization=0.01, learnable_tau=True, delta_t=0.2, v_rh=0.8):
+        super().__init__(threshold, tau, potential_bits, spike_regularization, learnable_tau)
+        self.delta_t = delta_t
+        self.v_rh = v_rh
+        
+    def forward(self, x: torch.Tensor, timesteps: int = 4, mem: Optional[torch.Tensor] = None):
+        batch, channels, length = x.shape
+        device = x.device
+        
+        v = mem if mem is not None else torch.zeros(batch, channels, length, device=device)
+        spike_sum = torch.zeros_like(x)
+        current = x / timesteps
+        
+        for t in range(timesteps):
+            exp_term = self.delta_t * torch.exp((v - self.v_rh) / self.delta_t)
+            exp_term = torch.clamp(exp_term, max=10.0) 
+            v = self.decay * v + exp_term + current
+            v = self._quantize_potential(v)
+            spike = (v >= self.threshold).float()
+            v = v * (1.0 - spike)
+            spike_sum = spike_sum + spike
+            
+        spike_rate = spike_sum / timesteps
+        reg_loss = self.spike_reg * torch.mean((spike_rate - 0.3) ** 2)
+        additional_metrics = {
+            'sparsity': 1.0 - torch.mean(spike_sum / timesteps).item(),
+            'firing_rate': torch.mean(spike_rate).item()
+        }
+        return spike_rate, v, reg_loss, additional_metrics
+
 
 
 class QuantizedDepthwiseConv1d(nn.Module):
@@ -332,6 +408,12 @@ def create_quant_conv_block(
     ]
     
     if use_lif:
-        layers.append(QuantLIFNeuron(**lif_kwargs))
+        neuron_type = lif_kwargs.pop('neuron_type', 'lif').lower()
+        if neuron_type == 'qlif':
+            layers.append(QuantQuadraticLIFNeuron(**lif_kwargs))
+        elif neuron_type == 'explif':
+            layers.append(QuantExponentialLIFNeuron(**lif_kwargs))
+        else:
+            layers.append(QuantLIFNeuron(**lif_kwargs))
     
     return nn.Sequential(*layers) if not use_lif else nn.ModuleList(layers)

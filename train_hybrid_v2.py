@@ -31,7 +31,11 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).parent / 'src'))
 
 from src.data.ptbxl import PTBXLDataset
+from src.data.dataset import get_dataloaders, get_kfold_dataloaders
 from src.models.v2 import HybridQuantumClassicalECG, HybridModelConfig
+from src.utils.metrics import PowerMeter
+from src.evaluation.advanced_metrics import AdvancedMetricsCalculator
+from src.evaluation.explainability import ECGGradCAM
 
 
 class EarlyStopping:
@@ -324,13 +328,13 @@ def validate(
     device: torch.device,
     epoch: int,
     writer: SummaryWriter,
-    power_meter: PowerMeter = None
+    power_meter: PowerMeter = None,
+    output_dir: str = None
 ) -> dict:
-    """Validate model with Latency and Energy tracking."""
+    """Validate model with Latency, Energy tracking, and Advanced Metrics."""
     model.eval()
     
     total_loss = 0.0
-    total_correct = 0
     total_samples = 0
     
     # Latency tracking
@@ -340,6 +344,9 @@ def validate(
     # Energy tracking
     total_energy = 0.0
     
+    # Advanced Metrics
+    metrics_calc = AdvancedMetricsCalculator()
+
     for batch in tqdm(val_loader, desc='Validating', leave=False):
         signal = batch['signal'].to(device)
         label = batch['label'].to(device)
@@ -357,16 +364,38 @@ def validate(
             
             if config['training'].get('criterion', 'cross_entropy') == 'bce_with_logits':
                 loss = F.binary_cross_entropy_with_logits(logits, label)
-                preds = (torch.sigmoid(logits) > 0.5).float()
-                correct = (preds == label).all(dim=1).sum().item()
+                probs = torch.sigmoid(logits)
+                preds = (probs > 0.5).float()
+                
+                # SNN doesn't currently support multi-label well in AdvancedMetrics, 
+                # but we'll feed it as flat arrays for overall stats
+                metrics_calc.update(
+                    preds.cpu().flatten().numpy(),
+                    label.cpu().flatten().numpy(),
+                    probs.cpu().flatten().numpy()
+                )
             else:
                 if label.dim() > 1:
                     label_idx = label.argmax(dim=1)
                 else:
                     label_idx = label
                 loss = F.cross_entropy(logits, label_idx)
+                probs = torch.softmax(logits, dim=1)
                 preds = logits.argmax(dim=1)
-                correct = (preds == label_idx).sum().item()
+                
+                # Compute probability for the *positive class* (assuming binary/class 1)
+                # For multi-class, this becomes more complex, but we fallback to 1D for metrics
+                if logits.shape[1] == 2:
+                    pos_probs = probs[:, 1]
+                else:
+                    # Generic fallback: max prob
+                    pos_probs = probs.max(dim=1).values
+                    
+                metrics_calc.update(
+                    preds.cpu().numpy(),
+                    label_idx.cpu().numpy(),
+                    pos_probs.cpu().numpy()
+                )
         
         # Synchronize for exact timing if CUDA
         if device.type == 'cuda':
@@ -386,25 +415,70 @@ def validate(
         total_energy += batch_energy
         
         total_loss += loss.item()
-        total_correct += correct
         total_samples += signal.shape[0]
     
     avg_loss = total_loss / len(val_loader)
-    accuracy = total_correct / total_samples
     avg_latency = np.mean(latencies)
-    avg_energy_per_sample = (total_energy / total_samples) * 1000.0 # mJ per sample
+    avg_energy_per_sample = (total_energy / total_samples) * 1000.0  # mJ per sample
+    
+    # Compute all advanced medical/core metrics
+    advanced_results = metrics_calc.compute()
+    accuracy = advanced_results.get("Accuracy", 0.0)
     
     writer.add_scalar('Val/Loss', avg_loss, epoch)
     writer.add_scalar('Val/Accuracy', accuracy, epoch)
     writer.add_scalar('Val/Latency_ms', avg_latency, epoch)
     writer.add_scalar('Val/Energy_mJ', avg_energy_per_sample, epoch)
     
-    return {
+    # Log other crucial metrics
+    for metric_name in ["F1-score", "Sensitivity", "Specificity", "MCC", "AUC-ROC"]:
+        if metric_name in advanced_results:
+             writer.add_scalar(f'Val/{metric_name}', advanced_results[metric_name], epoch)
+             
+    # Save visualizations if output_dir provided
+    if output_dir:
+        class_names = config.get('data', {}).get('class_names', ['Class 0', 'Class 1'])
+        metrics_calc.plot_confusion_matrix(str(Path(output_dir) / f'cm_epoch_{epoch}.png'), class_names)
+        metrics_calc.plot_roc_curve(str(Path(output_dir) / f'roc_epoch_{epoch}.png'))
+        
+        # Explainability: Grad-CAM on the first sample of the last batch
+        try:
+            target_layer = None
+            if hasattr(model, 'classical_path'):
+                for module in reversed(list(model.classical_path.modules())):
+                    if isinstance(module, nn.Conv1d):
+                        target_layer = module
+                        break
+            
+            if target_layer is not None:
+                grad_cam = ECGGradCAM(model, target_layer)
+                sample = signal[0:1] # shape (1, channels, seq_len)
+                
+                # Determine target class
+                if label.dim() == 1:
+                    true_label = int(label[0].item())
+                else:
+                    true_label = int(label[0].argmax().item())
+                    
+                cam = grad_cam.generate(sample, target_class=true_label)
+                grad_cam.plot_heatmap(
+                    sample.cpu().numpy(), cam, 
+                    save_path=str(Path(output_dir) / f'gradcam_epoch_{epoch}.png'),
+                    title=f'Grad-CAM (True Label: {true_label})'
+                )
+        except Exception as e:
+            print(f"Failed to generate Grad-CAM: {e}")
+    
+    # Combine baseline dict and advanced results
+    final_metrics = {
         'loss': avg_loss,
-        'accuracy': accuracy,
         'latency_ms': avg_latency,
-        'energy_mj': avg_energy_per_sample
+        'energy_mj': avg_energy_per_sample,
+        'accuracy': accuracy
     }
+    final_metrics.update(advanced_results)
+    
+    return final_metrics
 
 
 def train(config_or_path, debug: bool = False, k_folds: int = 5):
@@ -517,7 +591,8 @@ def train(config_or_path, debug: bool = False, k_folds: int = 5):
             
             # Validate
             val_metrics = validate(
-                model, val_loader, config, device, epoch, writer, power_meter
+                model, val_loader, config, device, epoch, writer, power_meter, 
+                output_dir=str(output_dir) if epoch == train_cfg['epochs'] else None
             )
             
             # Scheduler step
@@ -584,7 +659,8 @@ def train(config_or_path, debug: bool = False, k_folds: int = 5):
     )
     
     test_metrics = validate(
-        model, test_loader, config, device, 0, writer, power_meter
+        model, test_loader, config, device, 0, writer, power_meter,
+        output_dir=str(output_dir)
     )
     
     print(f"\nTest Results (Fold 10):")

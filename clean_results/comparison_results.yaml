@@ -1,0 +1,75 @@
+- fold_accuracies:
+  - 0.9927978347630625
+  - 0.9856874168539841
+  - 0.9890361943208404
+  - 0.9877517317308133
+  - 0.9955961282627643
+  k_folds: 5
+  mean_accuracy: 0.9901738611862928
+  model_name: ResNet1D Baseline
+  model_type: resnet
+  num_parameters: 3925893
+  std_accuracy: 0.00356582100848955
+  test_accuracy: 0.9955961282627643
+  test_energy_mj: 3.482277360890587
+  test_latency_ms: 0.2004762337534552
+- fold_accuracies:
+  - 0.9998165053442819
+  - 0.9999082526721409
+  - 0.9998165053442819
+  - 0.9998623790082114
+  - 0.9998165053442819
+  k_folds: 5
+  mean_accuracy: 0.9998440295426395
+  model_name: ViT Standard
+  model_type: vit
+  num_parameters: 892293
+  std_accuracy: 3.669893114359724e-05
+  test_accuracy: 0.9999082526721409
+  test_energy_mj: 1.050885986174961
+  test_latency_ms: 0.0785908535120637
+- fold_accuracies:
+  - 0.9994495160328456
+  - 0.9998165053442819
+  - 0.9998623790082114
+  - 0.9994495160328456
+  - 0.9998165053442819
+  k_folds: 5
+  mean_accuracy: 0.9996788843524932
+  model_name: ViT + SNN
+  model_type: vit_snn
+  num_parameters: 1944461
+  std_accuracy: 0.00018802607029605366
+  test_accuracy: 0.9998623790082114
+  test_energy_mj: 1.9829098692814824
+  test_latency_ms: 0.13577392804361674
+- fold_accuracies:
+  - 0.9763750630762879
+  - 0.9850910592229001
+  - 0.9892196889765585
+  - 0.9871553740997293
+  - 0.990366530574797
+  k_folds: 5
+  mean_accuracy: 0.9856415431900546
+  model_name: ViT + Quantum
+  model_type: vit_quantum
+  num_parameters: 1170655
+  std_accuracy: 0.00497174020591313
+  test_accuracy: 0.990366530574797
+  test_energy_mj: 5.900466246513922
+  test_latency_ms: 0.26409155656362265
+- fold_accuracies:
+  - 0.9812835451167484
+  - 0.9817422817560438
+  - 0.9802743245102986
+  - 0.9746318638469654
+  - 0.9802284508463691
+  k_folds: 5
+  mean_accuracy: 0.9796320932152851
+  model_name: ViT + SNN + Quantum (Hybrid)
+  model_type: vit_hybrid
+  num_parameters: 2222823
+  std_accuracy: 0.002567122367813802
+  test_accuracy: 0.9817422817560438
+  test_energy_mj: 8.574458879228855
+  test_latency_ms: 0.3503276668360502

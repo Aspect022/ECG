@@ -30,7 +30,7 @@ scheduler:
   eta_min: 1.0e-6
 
 training:
-  epochs: 100
+  epochs: 50
   patience: 15
   criterion: cross_entropy
   label_smoothing: 0.1

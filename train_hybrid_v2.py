@@ -38,9 +38,7 @@ except ImportError:
 sys.path.insert(0, str(Path(__file__).parent / 'src'))
 
 from src.data.ptbxl import PTBXLDataset
-from src.data.dataset import get_dataloaders, get_kfold_dataloaders
 from src.models.v2 import HybridQuantumClassicalECG, HybridModelConfig
-from src.utils.metrics import PowerMeter
 from src.evaluation.advanced_metrics import AdvancedMetricsCalculator
 from src.evaluation.explainability import ECGGradCAM
 
@@ -121,12 +119,17 @@ def create_fold_dataloaders(config: dict, train_folds: list, val_folds: list) ->
     
     exp_cfg = config['experiment']
     
+    num_workers = exp_cfg.get('num_workers', 4)
+    pin_memory = exp_cfg.get('pin_memory', True) and torch.cuda.is_available()
+    persistent_workers = True if num_workers > 0 else False
+    
     train_loader = DataLoader(
         train_dataset,
         batch_size=data_cfg['batch_size'],
         shuffle=True,
-        num_workers=exp_cfg['num_workers'],
-        pin_memory=exp_cfg['pin_memory'],
+        num_workers=num_workers,
+        pin_memory=pin_memory,
+        persistent_workers=persistent_workers,
         drop_last=True
     )
     
@@ -134,8 +137,9 @@ def create_fold_dataloaders(config: dict, train_folds: list, val_folds: list) ->
         val_dataset,
         batch_size=data_cfg.get('test_batch_size', data_cfg['batch_size']),
         shuffle=False,
-        num_workers=exp_cfg['num_workers'],
-        pin_memory=exp_cfg['pin_memory']
+        num_workers=num_workers,
+        pin_memory=pin_memory,
+        persistent_workers=persistent_workers
     )
     
     return train_loader, val_loader
@@ -155,12 +159,17 @@ def create_test_dataloader(config: dict) -> DataLoader:
         augment=False
     )
     
+    num_workers = exp_cfg.get('num_workers', 4)
+    pin_memory = exp_cfg.get('pin_memory', True) and torch.cuda.is_available()
+    persistent_workers = True if num_workers > 0 else False
+    
     test_loader = DataLoader(
         test_dataset,
         batch_size=data_cfg.get('test_batch_size', data_cfg['batch_size']),
         shuffle=False,
-        num_workers=exp_cfg['num_workers'],
-        pin_memory=exp_cfg['pin_memory']
+        num_workers=num_workers,
+        pin_memory=pin_memory,
+        persistent_workers=persistent_workers
     )
     
     return test_loader
@@ -239,6 +248,7 @@ def train_epoch(
             reg_loss = output['reg_loss']
             
             # Loss calculation
+            label_smoothing = config['training'].get('label_smoothing', 0.0)
             if config['training'].get('criterion', 'cross_entropy') == 'bce_with_logits':
                 ce_loss = F.binary_cross_entropy_with_logits(logits, label)
             else:
@@ -247,7 +257,7 @@ def train_epoch(
                     label_idx = label.argmax(dim=1)
                 else:
                     label_idx = label
-                ce_loss = F.cross_entropy(logits, label_idx)
+                ce_loss = F.cross_entropy(logits, label_idx, label_smoothing=label_smoothing)
             
             loss = ce_loss + reg_loss
             loss = loss / accumulation_steps
@@ -650,12 +660,11 @@ def train(config_or_path, debug: bool = False, k_folds: int = 5):
                 epoch_results.update({f'val_{k}': v for k, v in val_metrics.items() if k not in epoch_results})
                 fold_history.append(epoch_results)
                 
-                # Print epoch summary
                 print(f"  Epoch {epoch:03d} | "
                       f"Train/Val Acc: {train_metrics['accuracy']:.4f}/{val_metrics['accuracy']:.4f} | "
                       f"Loss: {train_metrics['loss']:.4f}/{val_metrics['loss']:.4f}")
                 
-                # Save PER-EPOCH checkpoint
+                # Checkpoint dict
                 checkpoint = {
                     'fold': fold_idx + 1,
                     'epoch': epoch,
@@ -664,12 +673,13 @@ def train(config_or_path, debug: bool = False, k_folds: int = 5):
                     'val_metrics': val_metrics,
                     'config': config
                 }
-                torch.save(checkpoint, fold_output_dir / f'checkpoint_epoch_{epoch}.pt')
+                # Save last checkpoint (overwrites to save disk space and I/O)
+                torch.save(checkpoint, fold_output_dir / 'last_model.pt')
                 
                 # Save best model for this fold
                 if val_metrics['accuracy'] > best_val_acc:
                     best_val_acc = val_metrics['accuracy']
-                    torch.save(checkpoint, fold_output_dir / f'best_model.pt')
+                    torch.save(checkpoint, fold_output_dir / 'best_model.pt')
                 
                 # Early stopping
                 if early_stopping(val_metrics['accuracy']):

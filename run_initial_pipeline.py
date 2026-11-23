@@ -15,7 +15,7 @@ def main():
     print("Starting Initial SNN & Quantum Variant Evaluation Pipeline")
     print("="*60)
 
-    base_config_path = Path("configs/hybrid_v2/default.yaml")
+    base_config_path = Path("configs/default.yaml")
     
     # Check if base config exists
     if not base_config_path.exists():

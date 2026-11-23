@@ -131,33 +131,18 @@ class VectorizedQuantumCircuit(nn.Module):
         
     def _init_helpers(self):
         """Initialize helper tensors for efficient computation."""
-        # Create Pauli-Z observable for each qubit
-        pauli_z_list = []
+        # Create Pauli-Z observable sign diagonals for each qubit
+        z_diagonals = []
         for qubit in range(self.n_qubits):
-            # Build I ⊗ ... ⊗ Z ⊗ ... ⊗ I
-            z_obs = self._create_pauli_z(qubit)
-            pauli_z_list.append(z_obs)
+            diag = torch.tensor([1.0], dtype=torch.float32)
+            for q in range(self.n_qubits):
+                diag_q = torch.tensor([1.0, -1.0] if q == qubit else [1.0, 1.0], dtype=torch.float32)
+                diag = torch.kron(diag, diag_q)
+            z_diagonals.append(diag)
         
-        # Stack for batch processing
-        self.register_buffer('pauli_z_obs', torch.stack(pauli_z_list, dim=0))
+        # Stack for batch processing of shape (n_qubits, state_dim)
+        self.register_buffer('z_diagonals', torch.stack(z_diagonals, dim=0))
     
-    def _create_pauli_z(self, qubit_idx: int) -> torch.Tensor:
-        """Create Pauli-Z observable for a specific qubit."""
-        # Z = diag(1, -1)
-        # Full observable is I^q0 ⊗ ... ⊗ Z^qi ⊗ ... ⊗ I^qn
-        
-        eye2 = torch.eye(2, dtype=torch.complex64)
-        pauli_z = torch.tensor([[1, 0], [0, -1]], dtype=torch.complex64)
-        
-        result = torch.tensor([1.0], dtype=torch.complex64)
-        
-        for i in range(self.n_qubits):
-            if i == qubit_idx:
-                result = torch.kron(result.view(-1, 1) if i == 0 else result, pauli_z)
-            else:
-                result = torch.kron(result.view(-1, 1) if i == 0 else result, eye2)
-        
-        return result.view(self.state_dim, self.state_dim)
     
     def _apply_single_qubit_gate(
         self,
@@ -228,9 +213,6 @@ class VectorizedQuantumCircuit(nn.Module):
         shape = [batch_size] + [2] * self.n_qubits
         state = state.view(*shape)
         
-        # Get slices where control qubit is |1⟩
-        # and swap target qubit values
-        
         # Build slice indices
         control_axis = control + 1  # +1 for batch dim
         target_axis = target + 1
@@ -243,14 +225,14 @@ class VectorizedQuantumCircuit(nn.Module):
         idx_c1_t1[control_axis] = 1
         idx_c1_t1[target_axis] = 1
         
-        # Swap values when control is |1⟩
-        state_c1_t0 = state[tuple(idx_c1_t0)].clone()
-        state_c1_t1 = state[tuple(idx_c1_t1)].clone()
+        # Clone state to avoid in-place mutation errors in autograd
+        new_state = state.clone()
         
-        state[tuple(idx_c1_t0)] = state_c1_t1
-        state[tuple(idx_c1_t1)] = state_c1_t0
+        # Swap values when control is |1⟩ (read from original state)
+        new_state[tuple(idx_c1_t0)] = state[tuple(idx_c1_t1)]
+        new_state[tuple(idx_c1_t1)] = state[tuple(idx_c1_t0)]
         
-        return state.reshape(batch_size, self.state_dim)
+        return new_state.reshape(batch_size, self.state_dim)
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
@@ -315,22 +297,14 @@ class VectorizedQuantumCircuit(nn.Module):
         Returns:
             (batch, n_qubits) expectation values
         """
-        batch_size = state.shape[0]
-        expectations = []
+        # Calculate state probabilities: |ψ|^2 of shape (batch, state_dim)
+        probs = state.abs() ** 2
         
-        for i in range(self.n_qubits):
-            # Observable for qubit i
-            obs = self.pauli_z_obs[i].to(state.device)  # (state_dim, state_dim)
-            
-            # Expectation: ⟨ψ|Z_i|ψ⟩ = ψ† @ Z_i @ ψ
-            # obs @ state.T -> (state_dim, batch)
-            obs_state = torch.matmul(obs, state.T).T  # (batch, state_dim)
-            
-            # Inner product: sum over state dimension
-            expectation = torch.real(torch.sum(state.conj() * obs_state, dim=1))
-            expectations.append(expectation)
+        # Batched expectation values: probs @ z_diagonals^T
+        # result: (batch, n_qubits)
+        expectations = torch.matmul(probs, self.z_diagonals.T)
         
-        return torch.stack(expectations, dim=1)  # (batch, n_qubits)
+        return expectations
 
 
 class QuantumMeasurement(nn.Module):
@@ -345,24 +319,15 @@ class QuantumMeasurement(nn.Module):
         self.n_qubits = n_qubits
         self.state_dim = 2 ** n_qubits
         
-        # Precompute Pauli-Z observables
-        pauli_z_list = []
+        # Precompute Pauli-Z sign diagonals
+        z_diagonals = []
         for qubit in range(n_qubits):
-            z_obs = self._create_pauli_z(qubit)
-            pauli_z_list.append(z_obs)
-        self.register_buffer('pauli_z_obs', torch.stack(pauli_z_list, dim=0))
-    
-    def _create_pauli_z(self, qubit_idx: int) -> torch.Tensor:
-        """Create Pauli-Z observable for specific qubit."""
-        eye2 = torch.eye(2, dtype=torch.complex64)
-        pauli_z = torch.tensor([[1, 0], [0, -1]], dtype=torch.complex64)
-        
-        result = torch.tensor([1.0], dtype=torch.complex64)
-        for i in range(self.n_qubits):
-            mat = pauli_z if i == qubit_idx else eye2
-            result = torch.kron(result.view(-1, 1) if i == 0 else result, mat)
-        
-        return result.view(self.state_dim, self.state_dim)
+            diag = torch.tensor([1.0], dtype=torch.float32)
+            for q in range(n_qubits):
+                diag_q = torch.tensor([1.0, -1.0] if q == qubit else [1.0, 1.0], dtype=torch.float32)
+                diag = torch.kron(diag, diag_q)
+            z_diagonals.append(diag)
+        self.register_buffer('z_diagonals', torch.stack(z_diagonals, dim=0))
     
     def forward(self, state: torch.Tensor) -> torch.Tensor:
         """
@@ -373,11 +338,5 @@ class QuantumMeasurement(nn.Module):
         Returns:
             (batch, n_qubits) Pauli-Z expectations
         """
-        expectations = []
-        for i in range(self.n_qubits):
-            obs = self.pauli_z_obs[i].to(state.device)
-            obs_state = torch.matmul(obs, state.T).T
-            exp = torch.real(torch.sum(state.conj() * obs_state, dim=1))
-            expectations.append(exp)
-        
-        return torch.stack(expectations, dim=1)
+        probs = state.abs() ** 2
+        return torch.matmul(probs, self.z_diagonals.T)

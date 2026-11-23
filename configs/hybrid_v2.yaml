@@ -6,8 +6,8 @@ experiment:
   use_amp: true
 
 data:
-  data_path: "/home/rajat/datasets/PTBXL"
-  task: "diagnostic"
+  data_path: "./data/ptbxl"
+  task: "superclass"
   sampling_rate: 500
   input_length: 5000
   num_channels: 12

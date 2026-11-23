@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Detailed Model Analysis: SNN, QNN, and Hybrid Architectures</title>
+    
+<style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+    
+    body {
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        line-height: 1.6;
+        color: #2c3e50;
+        max-width: 960px;
+        margin: 0 auto;
+        padding: 3rem 2rem;
+        background-color: #f4f7f6;
+    }
+    .container {
+        background-color: #ffffff;
+        padding: 3rem 4rem;
+        border-radius: 12px;
+        box-shadow: 0 10px 30px rgba(0,0,0,0.05);
+    }
+    h1, h2, h3, h4 { 
+        color: #1a252f; 
+        margin-top: 1.8em; 
+        font-weight: 700;
+    }
+    h1 { 
+        border-bottom: 3px solid #3498db; 
+        padding-bottom: 0.4em; 
+        font-size: 2.2rem;
+        margin-top: 0;
+    }
+    h2 { 
+        border-bottom: 2px solid #ecf0f1; 
+        padding-bottom: 0.3em; 
+        font-size: 1.6rem;
+    }
+    h3 {
+        font-size: 1.3rem;
+        color: #2980b9;
+    }
+    code {
+        background-color: #f0f4f8;
+        padding: 0.2em 0.4em;
+        border-radius: 4px;
+        font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+        font-size: 0.9em;
+        color: #e74c3c;
+    }
+    pre {
+        background-color: #282c34;
+        padding: 1.5em;
+        border-radius: 8px;
+        overflow-x: auto;
+        box-shadow: inset 0 2px 4px rgba(0,0,0,0.1);
+    }
+    pre code {
+        background-color: transparent;
+        padding: 0;
+        color: #abb2bf;
+        font-size: 0.9em;
+        line-height: 1.5;
+        border-radius: 0;
+    }
+    table {
+        border-collapse: collapse;
+        width: 100%;
+        margin: 2em 0;
+        font-size: 0.95em;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+        border-radius: 8px;
+        overflow: hidden;
+    }
+    th, td {
+        border-bottom: 1px solid #e1e4e8;
+        padding: 15px 20px;
+        text-align: left;
+    }
+    th {
+        background-color: #f8f9fa;
+        font-weight: 600;
+        color: #2c3e50;
+        text-transform: uppercase;
+        font-size: 0.85em;
+        letter-spacing: 0.05em;
+    }
+    tr:last-child th, tr:last-child td { border-bottom: none; }
+    tr:hover { background-color: #fbfdff; }
+    blockquote {
+        margin: 2em 0;
+        padding: 1em 1.5em;
+        color: #5c6c7d;
+        border-left: 5px solid #3498db;
+        background-color: #ebf5fb;
+        border-radius: 0 6px 6px 0;
+        font-style: italic;
+    }
+    a {
+        color: #3498db;
+        text-decoration: none;
+    }
+    a:hover {
+        text-decoration: underline;
+    }
+    ul, ol {
+        margin: 1em 0;
+        padding-left: 2em;
+    }
+    li { margin-bottom: 0.5em; }
+    
+    @media print {
+        .no-print { display: none !important; }
+        body { background-color: #ffffff; padding: 0; }
+        .container { box-shadow: none; padding: 1rem; border-radius: 0; }
+    }
+    .print-button {
+        position: fixed;
+        bottom: 30px;
+        right: 30px;
+        background-color: #3498db;
+        color: white;
+        border: none;
+        padding: 12px 24px;
+        border-radius: 50px;
+        font-size: 16px;
+        font-weight: 600;
+        cursor: pointer;
+        box-shadow: 0 4px 15px rgba(52, 152, 219, 0.4);
+        transition: all 0.3s ease;
+        z-index: 1000;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+    .print-button:hover {
+        background-color: #2980b9;
+        transform: translateY(-2px);
+        box-shadow: 0 6px 20px rgba(52, 152, 219, 0.6);
+    }
+    .print-button svg {
+        width: 20px;
+        height: 20px;
+    }
+</style>
+
+</head>
+<body>
+    <button class="print-button no-print" onclick="window.print()">
+        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"></path></svg>
+        Download PDF
+    </button>
+    <div class="container">
+        <h1>Detailed Model Analysis: SNN, QNN, and Hybrid Architectures</h1>
+<p>This document provides a comprehensive analysis of the experimental results and the intricate architectural details of the Spiking Neural Network (SNN), Quantum Neural Network (QNN), and their hybrid fusion variant implemented for the 12-lead ECG classification task.</p>
+<h2>1. Experimental Results Summary</h2>
+<p>The 5-fold cross-validation evaluation across the different models yielded the following metrics:</p>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">Model</th>
+<th style="text-align: left;">Test Accuracy</th>
+<th style="text-align: left;">Mean Accuracy (5-folds)</th>
+<th style="text-align: left;">Parameters</th>
+<th style="text-align: left;">Latency (ms)</th>
+<th style="text-align: left;">Energy (mJ)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><strong>ViT + SNN</strong></td>
+<td style="text-align: left;">98.98%</td>
+<td style="text-align: left;">99.96% ± 0.0001</td>
+<td style="text-align: left;">1,944,461</td>
+<td style="text-align: left;">0.13</td>
+<td style="text-align: left;">1.98</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>ViT + Quantum</strong></td>
+<td style="text-align: left;">99.03%</td>
+<td style="text-align: left;">98.56% ± 0.0049</td>
+<td style="text-align: left;">1,170,655</td>
+<td style="text-align: left;">0.26</td>
+<td style="text-align: left;">5.90</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>ViT + SNN + Quantum (Hybrid)</strong></td>
+<td style="text-align: left;">98.17%</td>
+<td style="text-align: left;">97.96% ± 0.0025</td>
+<td style="text-align: left;">2,222,823</td>
+<td style="text-align: left;">0.35</td>
+<td style="text-align: left;">8.57</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2>2. Global Training &amp; Implementation Settings</h2>
+<p>Before diving into the specific paths, several global and shared mechanisms are rigorously enabled across all training paradigms:
+*   <strong>Early Stopping:</strong> Enabled with a <code>patience=15</code>. Training ceases if validation accuracy does not improve by at least <code>min_delta=0.0</code> over 15 epochs.
+*   <strong>Automatic Mixed Precision (AMP):</strong> Enabled via <code>torch.cuda.amp.autocast()</code>, optimizing VRAM usage and accelerating the training loop on the RTX 5050.
+*   <strong>Optimizer &amp; Scheduler:</strong> Uses <code>AdamW</code> decoupled weight decay coupled with <code>CosineAnnealingWarmRestarts</code> for learning rate scheduling.
+*   <strong>Cross Validation:</strong> Strict stratified 5-fold cross-validation leveraging specific arrays of <code>train_folds</code> and <code>val_folds</code>.
+*   <strong>Weight Parameter Control:</strong> Gradient norm clipping is strictly enforced at a maximum norm of <code>1.0</code>.</p>
+<hr />
+<h2>3. Spiking Neural Network (SNN) Path Details</h2>
+<h3>SNN Type &amp; Architectural Integration</h3>
+<p>Instead of a standalone model, the SNN is tightly integrated into the ViT sequence explicitly via the <strong>SpikingTransformerBlock</strong>. This block replaces the standard Multi-Head Self Attention (MHSA) with a <strong>MultiScaleSpikingAttention (MSSA)</strong> module.
+*   The architecture processes data over a discrete simulation window of <strong><code>timesteps=4</code></strong>.
+*   The MSSA extracts temporal features across multiple receptive fields: <code>local_window=64</code>, <code>regional_window=256</code>, and <code>global_pool=16</code>.
+*   A 3-stage temporal pyramid explicitly captures High-res localized patterns (P/T waves), Mid-rank (QRS complex), and Low-res Rhythm patterns (HRV) using strided convolutions.</p>
+<h3>BIT LIF (Membrane Potential Quantization)</h3>
+<p>The models employ the <strong><code>QuantLIFNeuron</code></strong>, a highly customized Leaky Integrate-and-Fire neuron optimized for hardware constraints:
+*   <strong><code>potential_bits=8</code></strong>: The membrane potential is actively clamped between <code>[-2.0, 2.0]</code> and uniformly quantized to 8 bits.
+*   <strong>Reset Mechanism:</strong> A "soft reset" is utilized ($V = V \cdot (1 - S)$) rather than a rigid target reset.
+*   <strong>Surrogate Gradient:</strong> It leverages a <strong>Fast Sigmoid</strong> estimator (<code>beta=10.0</code>) during backpropagation to overcome the non-differentiability of the Heaviside step function.
+*   <strong>Hyperparameters:</strong> Firing threshold is initialized at <code>threshold=1.0</code>, with a membrane decay constant <code>tau=2.0</code>.
+*   <strong>Spike Regularization:</strong> An active L2 regularization loss penalizes deviations from an optimal <code>0.3</code> firing rate, maintaining energy-efficient sparsity.</p>
+<h3>Theoretical Foundation of SNNs</h3>
+<p>Spiking Neural Networks are often referred to as the third generation of neural networks, inspired directly by biological neurons. Unlike standard artificial neurons that output continuous floating-point values (like ReLUs), SNNs transmit information via discrete, binary events known as "spikes" over time. </p>
+<p>The core of our SNN is the Leaky Integrate-and-Fire (LIF) neuron. The biological equivalent manages a membrane potential $V(t)$ that integrates incoming current $I(t)$ and "leaks" charge over time, governed by the differential equation: $\tau_m \frac{dV}{dt} = -(V - V_{rest}) + R_m I(t)$. When $V$ reaches a threshold $V_{th}$, a spike is emitted, and the potential resets.</p>
+<h3>SNN Implementation Snippet</h3>
+<p>In our implementation, the <code>QuantLIFNeuron</code> utilizes a surrogate gradient (Fast Sigmoid) to remain differentiable during backpropagation. Here is the core operational loop of our LIF neuron over discrete simulation timesteps:</p>
+<pre><code class="language-python">for t in range(timesteps):
+    # Leak: potential decays over time
+    v = self.decay * v
+
+    # Integrate: input current is added
+    v = v + current
+
+    # Quantize membrane potential to hardware-friendly 8-bit
+    v = self._quantize_potential(v)
+
+    # Fire: generate a spike using Heaviside (with surrogate gradient for backward pass)
+    spike = (v &gt;= self.threshold).float()
+
+    # Reset: Soft reset mechanism prevents hard information loss
+    v = v * (1.0 - spike)
+
+    # Accumulate spikes across discrete timesteps
+    spike_sum = spike_sum + spike
+</code></pre>
+<h3>BIT Type (Weight Quantization)</h3>
+<ul>
+<li><strong><code>weight_bits=1</code></strong>: Convolutional weights are constrained using Binary Quantization. </li>
+<li>It utilizes a hardware-efficient <strong>Straight-Through Estimator (STE)</strong>. Instead of raw binary weights, they are strategically scaled by their mean absolute value along the channel axes, boosting gradient flow and representational power even at 1-bit constraints.</li>
+</ul>
+<hr />
+<h2>4. Quantum Neural Network (QNN) Path Details</h2>
+<p>The Quantum block operates concurrently by maintaining a vectorized, fully parallel PyTorch simulation (<code>VectorizedQuantumCircuit</code>), natively escaping the bottleneck of PennyLane plugin transfers. </p>
+<h3>Quantum Circuit Layout &amp; Layers Enabled</h3>
+<ol>
+<li><strong>Amplitude Encoding:</strong> Classical features are compressed and mapped to rotations in the operational range $[0, \pi]$.</li>
+<li><strong>Variational Layers:</strong> Configured with <code>n_qubits=8</code> and <code>n_layers=3</code>.</li>
+<li><strong>Measurement:</strong> Standard Pauli-Z expectation value measurements track the state of every individual qubit.</li>
+</ol>
+<h3>Rotation Specifications</h3>
+<ul>
+<li><strong>State Preparation:</strong> Initial amplitude encoding applies pure <strong><code>RY</code></strong> rotations.</li>
+<li><strong>Parameterised Variational Rotations:</strong> Dictated by the configurable <code>rotation_axes</code> constraint (usually <code>'yz'</code>). During each layer step, the circuit subsequently applies parameterized rotational equivalents (e.g., <code>RY</code> followed by <code>RZ</code>) with independent, trainable parameters initialized around zero ($N(0, 0.1)$).</li>
+</ul>
+<h3>Entanglement Strategy</h3>
+<ul>
+<li><strong>Type:</strong> The circuit enforces a <strong><code>circular</code></strong> entanglement topology. </li>
+<li><strong>Mechanism:</strong> Implemented using deterministic cascading <code>CNOT</code> operations acting on adjacent topological pairs—control qubit $q$ directly entangled to target qubit $(q+1) \pmod N$. </li>
+</ul>
+<h3>Theoretical Foundation of QNNs</h3>
+<p>Quantum Neural Networks (QNNs) or Parameterized Quantum Circuits (PQCs) represent operations as unitary transformations in a $2^n$-dimensional complex Hilbert space using $n$ qubits. The exponentially large state space allows quantum circuits to capture highly complex, non-linear relationships with fewer parameters than classical counterparts.</p>
+<p>The generic parameterized quantum circuit consists of three main phases:
+1. <strong>Data Encoding (State Preparation):</strong> Classical continuous data is encoded into quantum state amplitudes, pivoting the state vector $|\psi\rangle$ on the Bloch sphere.
+2. <strong>Trainable Evolution:</strong> Parametrized unitary gates (e.g., $U(\theta)$) are varied during training to minimize the given loss function.
+3. <strong>Measurement:</strong> Measuring an observable (like the Pauli-Z operator, $\sigma_z$) collapses the state to provide classical expectation values for the final fully-connected layers.</p>
+<h3>Quantum Circuit Implementation Snippet</h3>
+<p>Instead of relying on slow CPU-bound plugins like PennyLane, our <code>VectorizedQuantumCircuit</code> natively simulates quantum operations via pure PyTorch tensors, unlocking massive parallel compute. Here's a glimpse into the vectorized batch Pauli-Z measurement:</p>
+<pre><code class="language-python">def measure(self, state: torch.Tensor) -&gt; torch.Tensor:
+    batch_size = state.shape[0]
+    expectations = []
+
+    for i in range(self.n_qubits):
+        # Retrieve the precomputed Pauli-Z observable
+        obs = self.pauli_z_obs[i].to(state.device)
+
+        # Calculate Expectation: ⟨ψ|Z|ψ⟩ 
+        obs_state = torch.matmul(obs, state.T).T
+
+        # Inner product: sum over state dimension
+        expectation = torch.real(torch.sum(state.conj() * obs_state, dim=1))
+        expectations.append(expectation)
+
+    return torch.stack(expectations, dim=1) # (batch, n_qubits)
+</code></pre>
+<hr />
+<h2>5. The Hybrid Architecture: Gated Fusion</h2>
+<p>For the <strong>ViT + SNN + Quantum (Hybrid)</strong> model, the architecture maintains an explicit dual-branch execution: 
+*   <strong>Path A:</strong> Spiking ViT Backbone (yielding classical/spiking features).
+*   <strong>Path B:</strong> Vectorized Quantum Circuit (yielding quantum expectations).</p>
+<h3>Fusion Architecture</h3>
+<p>Upon conclusion of both independent paths, the network integrates the representations within the <strong><code>GatedFusionModule</code></strong>. 
+*   The quantum features are expanded linearly to map against the 128-D dimensions of the classical ViT features.
+*   A dense neural gate evaluates a concatenated array of <code>[classical, quantum]</code>. It projects down through an ELU activation into a scalar <strong><code>Sigmoid</code></strong> gate weight ($g \in [0, 1]$).
+*   The features are finally blended using linear interpolation: 
+    $$h_{fused} = (1 - g) \cdot h_{classical} + g \cdot h_{quantum_expanded}$$
+*   The output undergoes <code>LayerNorm</code> stabilization before proceeding to the ML classification head.</p>
+<h3>Reason for Fusing</h3>
+<p>The explicit rationale defining the gated fusion is to mathematically empower the model to <strong>dynamically balance classical robustness with quantum enhancement</strong>. Rather than rigidly forcing both representations on every sample, the learned scalar parameter $g$ dynamically assesses whether local deterministic features (classical SNN/ViT processing) alone are sufficient ($g \approx 0$), or if the abstract representational spaces created by variations in Hilbert space ($g \approx 1$) yield better classification boundaries on ambiguous electrocardiogram signals.</p>
+<h3>Theoretical Foundation of Gated Fusion</h3>
+<p>In clinical environments like ECG analysis, no single processing modality acts impeccably on every signal instance. Some signals present highly canonical morphologies perfect for the classical SNN tree. In contrast, noisy or highly atypical signals may benefit from the abstract correlation spaces explored by the parallel quantum circuit's Hilbert space embedding.</p>
+<p>Gated Late Fusion creates a mechanism of <strong>Learned Modality Specialization</strong>. By utilizing a differentiable gating network $g(X)$, the architecture dynamically routes feature selection based on the input signal itself, naturally shifting its attention to the representation space (Classical vs. Quantum) that affords the highest confidence.</p>
+<h3>Fusion Implementation Snippet</h3>
+<p>The implementation of this dynamic differential routing is concise but extremely powerful, maintaining a smooth gradient flow across both distinct modalities:</p>
+<pre><code class="language-python"># Compute dynamic gate value based on concatenated features
+combined = torch.cat([classical_features, quantum_features], dim=1)
+gate = self.gate_network(combined)  # (batch, 1), normalized via Sigmoid
+
+# Project quantum features into classical vector space
+quantum_expanded = self.quantum_expansion(quantum_features)  # (batch, 128)
+
+# Differentiable Gated Interpolation
+fused = (1 - gate) * classical_features + gate * quantum_expanded
+
+# Final normalization before the classification head
+fused = self.norm(fused)
+return fused, gate
+</code></pre>
+    </div>
+</body>
+</html>

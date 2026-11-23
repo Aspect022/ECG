@@ -1,5 +1,8 @@
-import torch;print("CUDA:",torch.cuda.is_available(),torch.cuda.get_device_name(0) if torch.cuda.is_available() else "CPU")
-import sys; sys.path.append("/home/rajat/.config/torch"); import max_perf
+import sys
+try:
+    import max_perf
+except ImportError:
+    pass
 import torch
 
 torch.backends.cudnn.benchmark=True

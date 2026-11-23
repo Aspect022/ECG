@@ -230,4 +230,4 @@ if __name__ == "__main__":
     print(f"Logits shape: {output['logits'].shape}")
     print(f"Gate mean: {output['gate'].mean().item():.4f}")
     print(f"Reg loss: {output['reg_loss'].item():.6f}")
-    print("✅ Model test passed!")
+    print("Model test passed successfully!")

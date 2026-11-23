@@ -9,7 +9,7 @@ sys.path.insert(0, str(Path.cwd() / 'src'))
 from src.data.ptbxl import PTBXLDataset
 
 def test_label_consistency():
-    data_path = "/home/rajat/datasets/PTBXL"
+    data_path = "./data/ptbxl"
     
     # Check if data exists
     if not os.path.exists(data_path):

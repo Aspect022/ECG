@@ -27,6 +27,27 @@ class StraightThroughEstimator(torch.autograd.Function):
         return grad_output.clamp(-1, 1)
 
 
+class SurrogateSpike(torch.autograd.Function):
+    """Surrogate gradient for LIF neuron spiking."""
+    
+    @staticmethod
+    def forward(ctx, input: torch.Tensor, threshold: float = 1.0, beta: float = 10.0) -> torch.Tensor:
+        ctx.save_for_backward(input)
+        ctx.threshold = threshold
+        ctx.beta = beta
+        return (input >= threshold).float()
+        
+    @staticmethod
+    def backward(ctx, grad_output: torch.Tensor) -> Tuple[torch.Tensor, None, None]:
+        input, = ctx.saved_tensors
+        beta = ctx.beta
+        threshold = ctx.threshold
+        # Fast sigmoid surrogate gradient:
+        # d(spike)/d(v) ≈ beta / (2 * (1 + beta * |v - thresh|)^2)
+        grad_input = beta / (2.0 * (1.0 + beta * torch.abs(input - threshold)) ** 2)
+        return grad_output * grad_input, None, None
+
+
 class QuantizedConv1d(nn.Module):
     """
     1D Convolution with weight quantization.
@@ -198,17 +219,8 @@ class QuantLIFNeuron(nn.Module):
         return v + (v_quantized - v).detach()
     
     def _surrogate_spike(self, v: torch.Tensor) -> torch.Tensor:
-        """Fast sigmoid surrogate gradient for spikes."""
-        # Forward: Heaviside
-        spike = (v >= self.threshold).float()
-        
-        # Backward: Fast sigmoid gradient
-        # d(spike)/d(v) ≈ beta / (2 * (1 + beta * |v - thresh|)^2)
-        beta = 10.0
-        grad_surrogate = beta / (2.0 * (1.0 + beta * torch.abs(v - self.threshold)) ** 2)
-        
-        # STE: spike for forward, grad_surrogate * grad_output for backward
-        return spike + (grad_surrogate * (v - self.threshold) - spike + spike).detach()
+        """Fast sigmoid surrogate gradient for spikes using autograd function."""
+        return SurrogateSpike.apply(v, self.threshold, 10.0)
     
     def forward(
         self, 
@@ -253,7 +265,7 @@ class QuantLIFNeuron(nn.Module):
             v = self._quantize_potential(v)
             
             # Fire (with surrogate gradient)
-            spike = (v >= self.threshold).float()
+            spike = self._surrogate_spike(v)
             
             # Reset (soft reset)
             v = v * (1.0 - spike)
@@ -267,13 +279,7 @@ class QuantLIFNeuron(nn.Module):
         # Spike regularization loss (encourage ~0.3 firing rate by default)
         reg_loss = self.spike_reg * torch.mean((spike_rate - 0.3) ** 2)
         
-        # Calculate additional metrics (sparsity)
-        additional_metrics = {
-            'sparsity': 1.0 - torch.mean(spike_sum / timesteps).item(),
-            'firing_rate': torch.mean(spike_rate).item()
-        }
-        
-        return spike_rate, v, reg_loss, additional_metrics
+        return spike_rate, v, reg_loss
 
 class QuantQuadraticLIFNeuron(QuantLIFNeuron):
     """
@@ -297,17 +303,13 @@ class QuantQuadraticLIFNeuron(QuantLIFNeuron):
             quadratic_term = self.a * (v - self.v_rest) * (v - self.v_c)
             v = self.decay * v + quadratic_term + current
             v = self._quantize_potential(v)
-            spike = (v >= self.threshold).float()
+            spike = self._surrogate_spike(v)
             v = v * (1.0 - spike)
             spike_sum = spike_sum + spike
             
         spike_rate = spike_sum / timesteps
         reg_loss = self.spike_reg * torch.mean((spike_rate - 0.3) ** 2)
-        additional_metrics = {
-            'sparsity': 1.0 - torch.mean(spike_sum / timesteps).item(),
-            'firing_rate': torch.mean(spike_rate).item()
-        }
-        return spike_rate, v, reg_loss, additional_metrics
+        return spike_rate, v, reg_loss
 
 
 class QuantExponentialLIFNeuron(QuantLIFNeuron):
@@ -332,17 +334,13 @@ class QuantExponentialLIFNeuron(QuantLIFNeuron):
             exp_term = torch.clamp(exp_term, max=10.0) 
             v = self.decay * v + exp_term + current
             v = self._quantize_potential(v)
-            spike = (v >= self.threshold).float()
+            spike = self._surrogate_spike(v)
             v = v * (1.0 - spike)
             spike_sum = spike_sum + spike
             
         spike_rate = spike_sum / timesteps
         reg_loss = self.spike_reg * torch.mean((spike_rate - 0.3) ** 2)
-        additional_metrics = {
-            'sparsity': 1.0 - torch.mean(spike_sum / timesteps).item(),
-            'firing_rate': torch.mean(spike_rate).item()
-        }
-        return spike_rate, v, reg_loss, additional_metrics
+        return spike_rate, v, reg_loss
 
 
 
